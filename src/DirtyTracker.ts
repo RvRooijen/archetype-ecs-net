@@ -9,6 +9,10 @@ export const Networked: ComponentType = component('Networked');
 export interface SnapshotDiffer {
   /** Compare current ECS state against previous snapshot, return delta */
   diff(): Delta;
+  /** Current mapping of entityId → netId for all tracked entities */
+  readonly entityNetIds: ReadonlyMap<EntityId, number>;
+  /** Reverse mapping of netId → entityId */
+  readonly netIdToEntity: ReadonlyMap<number, EntityId>;
 }
 
 export function createSnapshotDiffer(
@@ -29,16 +33,26 @@ export function createSnapshotDiffer(
   }
 
   let firstDiff = true;
+  let nextNetId = 1;
+  const entityToNetId = new Map<EntityId, number>();
+  const netIdToEntityMap = new Map<number, EntityId>();
 
   return {
+    get entityNetIds(): ReadonlyMap<EntityId, number> {
+      return entityToNetId;
+    },
+    get netIdToEntity(): ReadonlyMap<number, EntityId> {
+      return netIdToEntityMap;
+    },
+
     diff(): Delta {
       const changes = (em as any).flushChanges();
       const coreCreated: Set<EntityId> = changes.created;
       const coreDestroyed: Set<EntityId> = changes.destroyed;
 
-      const createdMap = new Map<EntityId, Map<number, Record<string, unknown>>>();
-      const destroyedSet = new Set<EntityId>();
-      const updated = new Map<EntityId, DirtyField[]>();
+      const createdMap = new Map<number, Map<number, Record<string, unknown>>>();
+      const destroyed: number[] = [];
+      const updated = new Map<number, DirtyField[]>();
 
       // First diff: treat all existing Networked entities as created (baseline)
       if (firstDiff) {
@@ -51,14 +65,23 @@ export function createSnapshotDiffer(
         }
       }
 
-      // Handle destroyed
+      // Handle destroyed — collect netIds before removing from map
       for (const eid of coreDestroyed) {
-        destroyedSet.add(eid);
+        const netId = entityToNetId.get(eid);
+        if (netId !== undefined) {
+          destroyed.push(netId);
+          entityToNetId.delete(eid);
+          netIdToEntityMap.delete(netId);
+        }
       }
 
-      // Handle created — collect full component data
+      // Handle created — assign netId, collect full component data
       for (const eid of coreCreated) {
         if (coreDestroyed.has(eid)) continue;
+        const netId = nextNetId++;
+        entityToNetId.set(eid, netId);
+        netIdToEntityMap.set(netId, eid);
+
         const compMap = new Map<number, Record<string, unknown>>();
         for (const cf of compFields) {
           let rec: Record<string, unknown> | undefined;
@@ -70,7 +93,7 @@ export function createSnapshotDiffer(
             }
           }
         }
-        createdMap.set(eid, compMap);
+        createdMap.set(netId, compMap);
       }
 
       // Diff using double-buffered snapshots: compare front vs back arrays
@@ -105,11 +128,14 @@ export function createSnapshotDiffer(
           // Skip created/destroyed (handled above)
           if (coreCreated.has(eid) || coreDestroyed.has(eid)) continue;
 
+          const netId = entityToNetId.get(eid);
+          if (netId === undefined) continue;
+
           for (let f = 0; f < allFieldArrs.length; f++) {
             const fa = allFieldArrs[f];
             if (fa.front[i] !== fa.back[i]) {
-              let fields = updated.get(eid);
-              if (!fields) { fields = []; updated.set(eid, fields); }
+              let fields = updated.get(netId);
+              if (!fields) { fields = []; updated.set(netId, fields); }
               let df = fields.find(d => d.componentWireId === fa.wireId);
               if (!df) {
                 df = { componentWireId: fa.wireId, fields: new Set() };
@@ -124,7 +150,7 @@ export function createSnapshotDiffer(
       // Flush snapshots: copy front → back (one .set() memcpy per field)
       (em as any).flushSnapshots();
 
-      return { created: createdMap, destroyed: destroyedSet, updated };
+      return { created: createdMap, destroyed, updated };
     },
   };
 }

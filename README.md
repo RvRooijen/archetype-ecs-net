@@ -41,7 +41,7 @@ for (let i = 0; i < 1000; i++) {
   em.createEntityWith(
     Position, { x: Math.random() * 800, y: Math.random() * 600 },
     Velocity, { vx: 1, vy: 1 },
-    Networked, {},
+    Networked,
   )
 }
 
@@ -146,7 +146,7 @@ Only entities with the `Networked` tag component are tracked and synced:
 import { Networked } from 'archetype-ecs-net'
 
 // This entity is synced
-em.createEntityWith(Position, { x: 0, y: 0 }, Networked, {})
+em.createEntityWith(Position, { x: 0, y: 0 }, Networked)
 
 // This entity is local-only
 em.createEntityWith(Position, { x: 0, y: 0 })
@@ -163,7 +163,7 @@ Binary format. Field values are written with their native byte size, no JSON enc
 **Full state** (sent on client connect):
 ```
 [u8 0x01] [u16 entityCount]
-  for each: [u32 entityId] [u8 componentCount]
+  for each: [u32 netId] [u8 componentCount]
     for each: [u8 wireId] [field values in schema order]
 ```
 
@@ -171,9 +171,11 @@ Binary format. Field values are written with their native byte size, no JSON enc
 ```
 [u8 0x02]
   [u16 createdCount]  → full component data per entity
-  [u16 destroyedCount] → entity IDs only
-  [u16 updatedCount]  → entity ID + wire ID + field bitmask + changed values
+  [u16 destroyedCount] → netIds only
+  [u16 updatedCount]  → netId + wire ID + field bitmask + changed values
 ```
+
+The wire protocol uses stable network IDs (`netId`) instead of raw entity IDs. The server assigns each networked entity a monotonic `netId` on creation; the client maintains a `netId → localEntityId` mapping. This decouples server and client entity ID spaces.
 
 Only changed fields are sent per entity — if only `Position.x` changed, `Position.y` stays off the wire.
 
@@ -220,7 +222,7 @@ differ.diff()
 
 // Game loop
 const delta = differ.diff()
-const buffer = encoder.encodeDelta(delta, em, registry)
+const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity)
 // → send buffer to clients
 
 // On receive
@@ -235,10 +237,10 @@ const msg = decoder.decode(buffer, registry)
 
 | Test | ms/frame | overhead |
 |---|---:|---:|
-| Raw ECS forEach (100k) | 0.33 | baseline |
-| forEach + diff (1k networked) | 0.81 | +0.48ms |
-| forEach + diff + encode (1k networked) | 1.57 | +1.24ms |
-| forEach + diff (100k networked, worst) | 86.8 | +86.5ms |
+| Raw ECS forEach (100k) | 0.32 | baseline |
+| forEach + diff (1k networked) | 0.83 | +0.51ms |
+| forEach + diff + encode (1k networked) | 1.53 | +1.21ms |
+| forEach + diff (100k networked, worst) | 108.1 | +107.8ms |
 
 1k networked out of 100k total adds ~0.5ms diff overhead per frame.
 
@@ -264,9 +266,11 @@ Tag component. Add to any entity that should be synced over the network.
 
 Create a differ that compares the current ECS state against a double-buffered snapshot. Returns a `SnapshotDiffer` with a single method:
 
-| Method | Description |
+| Method / Property | Description |
 |---|---|
 | `diff()` | Compare front vs back buffers, return `Delta`, flush snapshots |
+| `entityNetIds` | `ReadonlyMap<EntityId, number>` — entity → netId mapping |
+| `netIdToEntity` | `ReadonlyMap<number, EntityId>` — netId → entity mapping |
 
 ### `createNetServer(em, registry, config, transport?)`
 
@@ -299,8 +303,8 @@ Binary codec. Write buffer grows as needed.
 
 | Method | Description |
 |---|---|
-| `encoder.encodeFullState(em, registry)` | Encode all Networked entities → `ArrayBuffer` |
-| `encoder.encodeDelta(delta, em, registry)` | Encode delta → `ArrayBuffer` |
+| `encoder.encodeFullState(em, registry, entityNetIds)` | Encode all Networked entities → `ArrayBuffer` |
+| `encoder.encodeDelta(delta, em, registry, netIdToEntity)` | Encode delta → `ArrayBuffer` |
 | `decoder.decode(buffer, registry)` | Decode → `FullStateMessage \| DeltaMessage` |
 
 ---

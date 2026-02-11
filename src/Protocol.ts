@@ -116,15 +116,18 @@ export class ProtocolEncoder {
 
   // ── Full state encoding ─────────────────────────────
 
-  encodeFullState(em: EntityManager, registry: ComponentRegistry): ArrayBuffer {
+  encodeFullState(
+    em: EntityManager,
+    registry: ComponentRegistry,
+    entityNetIds: ReadonlyMap<EntityId, number>,
+  ): ArrayBuffer {
     this.reset();
     this.writeU8(MSG_FULL);
 
-    const entities = em.getAllEntities();
-    this.writeU16(entities.length);
+    this.writeU16(entityNetIds.size);
 
-    for (const entityId of entities) {
-      this.writeU32(entityId);
+    for (const [entityId, netId] of entityNetIds) {
+      this.writeU32(netId);
 
       // Count components this entity has
       const comps: { reg: (typeof registry.components)[number]; data: Record<string, unknown> }[] = [];
@@ -147,14 +150,19 @@ export class ProtocolEncoder {
 
   // ── Delta encoding ──────────────────────────────────
 
-  encodeDelta(delta: Delta, em: EntityManager, registry: ComponentRegistry): ArrayBuffer {
+  encodeDelta(
+    delta: Delta,
+    em: EntityManager,
+    registry: ComponentRegistry,
+    netIdToEntity: ReadonlyMap<number, EntityId>,
+  ): ArrayBuffer {
     this.reset();
     this.writeU8(MSG_DELTA);
 
     // Created entities
     this.writeU16(delta.created.size);
-    for (const [entityId, compMap] of delta.created) {
-      this.writeU32(entityId);
+    for (const [netId, compMap] of delta.created) {
+      this.writeU32(netId);
       this.writeU8(compMap.size);
       for (const [wireId, data] of compMap) {
         const reg = registry.byWireId(wireId);
@@ -165,9 +173,9 @@ export class ProtocolEncoder {
     }
 
     // Destroyed entities
-    this.writeU16(delta.destroyed.size);
-    for (const entityId of delta.destroyed) {
-      this.writeU32(entityId);
+    this.writeU16(delta.destroyed.length);
+    for (const netId of delta.destroyed) {
+      this.writeU32(netId);
     }
 
     // Updated fields
@@ -177,12 +185,15 @@ export class ProtocolEncoder {
     }
     this.writeU16(updateCount);
 
-    for (const [entityId, dirtyFields] of delta.updated) {
+    for (const [netId, dirtyFields] of delta.updated) {
+      const entityId = netIdToEntity.get(netId);
+      if (entityId === undefined) continue;
+
       for (const dirty of dirtyFields) {
         const reg = registry.byWireId(dirty.componentWireId);
         if (!reg) continue;
 
-        this.writeU32(entityId);
+        this.writeU32(netId);
         this.writeU8(dirty.componentWireId);
 
         // Build field bitmask
@@ -312,10 +323,10 @@ export class ProtocolDecoder {
 
   private decodeFullState(registry: ComponentRegistry): FullStateMessage {
     const entityCount = this.readU16();
-    const entities = new Map<EntityId, Map<number, Record<string, unknown>>>();
+    const entities = new Map<number, Map<number, Record<string, unknown>>>();
 
     for (let e = 0; e < entityCount; e++) {
-      const entityId = this.readU32();
+      const netId = this.readU32();
       const compCount = this.readU8();
       const compMap = new Map<number, Record<string, unknown>>();
 
@@ -326,7 +337,7 @@ export class ProtocolDecoder {
         compMap.set(wireId, this.readComponentData(reg.fields));
       }
 
-      entities.set(entityId, compMap);
+      entities.set(netId, compMap);
     }
 
     return { type: MSG_FULL, entities };
@@ -335,9 +346,9 @@ export class ProtocolDecoder {
   private decodeDelta(registry: ComponentRegistry): DeltaMessage {
     // Created
     const createdCount = this.readU16();
-    const created = new Map<EntityId, Map<number, Record<string, unknown>>>();
+    const created = new Map<number, Map<number, Record<string, unknown>>>();
     for (let i = 0; i < createdCount; i++) {
-      const entityId = this.readU32();
+      const netId = this.readU32();
       const compCount = this.readU8();
       const compMap = new Map<number, Record<string, unknown>>();
       for (let c = 0; c < compCount; c++) {
@@ -346,12 +357,12 @@ export class ProtocolDecoder {
         if (!reg) throw new Error(`Unknown wire ID: ${wireId}`);
         compMap.set(wireId, this.readComponentData(reg.fields));
       }
-      created.set(entityId, compMap);
+      created.set(netId, compMap);
     }
 
     // Destroyed
     const destroyedCount = this.readU16();
-    const destroyed: EntityId[] = [];
+    const destroyed: number[] = [];
     for (let i = 0; i < destroyedCount; i++) {
       destroyed.push(this.readU32());
     }
@@ -360,7 +371,7 @@ export class ProtocolDecoder {
     const updatedCount = this.readU16();
     const updated: DeltaMessage['updated'] = [];
     for (let i = 0; i < updatedCount; i++) {
-      const entityId = this.readU32();
+      const netId = this.readU32();
       const wireId = this.readU8();
       const fieldMask = this.readU8();
       const reg = registry.byWireId(wireId);
@@ -373,7 +384,7 @@ export class ProtocolDecoder {
         }
       }
 
-      updated.push({ entityId, componentWireId: wireId, fieldMask, data });
+      updated.push({ netId, componentWireId: wireId, fieldMask, data });
     }
 
     return { type: MSG_DELTA, created, destroyed, updated };
@@ -385,12 +396,21 @@ export class ProtocolDecoder {
 const sharedEncoder = new ProtocolEncoder();
 const sharedDecoder = new ProtocolDecoder();
 
-export function encodeFullState(em: EntityManager, registry: ComponentRegistry): ArrayBuffer {
-  return sharedEncoder.encodeFullState(em, registry);
+export function encodeFullState(
+  em: EntityManager,
+  registry: ComponentRegistry,
+  entityNetIds: ReadonlyMap<EntityId, number>,
+): ArrayBuffer {
+  return sharedEncoder.encodeFullState(em, registry, entityNetIds);
 }
 
-export function encodeDelta(delta: Delta, em: EntityManager, registry: ComponentRegistry): ArrayBuffer {
-  return sharedEncoder.encodeDelta(delta, em, registry);
+export function encodeDelta(
+  delta: Delta,
+  em: EntityManager,
+  registry: ComponentRegistry,
+  netIdToEntity: ReadonlyMap<number, EntityId>,
+): ArrayBuffer {
+  return sharedEncoder.encodeDelta(delta, em, registry, netIdToEntity);
 }
 
 export function decode(buffer: ArrayBuffer, registry: ComponentRegistry): NetMessage {

@@ -1,4 +1,4 @@
-import type { EntityManager } from 'archetype-ecs';
+import type { EntityId, EntityManager } from 'archetype-ecs';
 import type { ComponentRegistry } from './ComponentRegistry.js';
 import { ProtocolDecoder } from './Protocol.js';
 import { MSG_DELTA, MSG_FULL } from './types.js';
@@ -29,19 +29,18 @@ export function createNetClient(
     wireToComponent.set(reg.wireId, reg);
   }
 
+  // netId → local entity ID mapping
+  const netToEntity = new Map<number, EntityId>();
+
   function applyFullState(msg: FullStateMessage) {
-    // Clear all existing entities
+    // Clear all existing entities and mappings
     for (const id of em.getAllEntities()) {
       em.destroyEntity(id);
     }
+    netToEntity.clear();
 
     // Recreate entities with their components
-    for (const [entityId, compMap] of msg.entities) {
-      // We need to create the entity with a specific ID.
-      // archetype-ecs creates sequential IDs, so we create entities
-      // and use createEntityWith for batch creation.
-      // For now, we create + add components individually.
-      // Note: this assumes server and client entity IDs are synchronized.
+    for (const [netId, compMap] of msg.entities) {
       const args: unknown[] = [];
       for (const [wireId, data] of compMap) {
         const reg = wireToComponent.get(wireId);
@@ -50,43 +49,50 @@ export function createNetClient(
         }
       }
 
-      if (args.length > 0) {
-        em.createEntityWith(...args);
-      } else {
-        em.createEntity();
-      }
+      const localId = args.length > 0
+        ? em.createEntityWith(...args)
+        : em.createEntity();
+
+      netToEntity.set(netId, localId);
     }
   }
 
   function applyDelta(msg: DeltaMessage) {
     // Apply creates
-    for (const [_entityId, compMap] of msg.created) {
+    for (const [netId, compMap] of msg.created) {
       const args: unknown[] = [];
       for (const [wireId, data] of compMap) {
         const reg = wireToComponent.get(wireId);
         if (reg) args.push(reg.component, data);
       }
-      if (args.length > 0) {
-        em.createEntityWith(...args);
-      } else {
-        em.createEntity();
-      }
+      const localId = args.length > 0
+        ? em.createEntityWith(...args)
+        : em.createEntity();
+
+      netToEntity.set(netId, localId);
     }
 
     // Apply destroys
-    for (const entityId of msg.destroyed) {
-      em.destroyEntity(entityId);
+    for (const netId of msg.destroyed) {
+      const localId = netToEntity.get(netId);
+      if (localId !== undefined) {
+        em.destroyEntity(localId);
+        netToEntity.delete(netId);
+      }
     }
 
     // Apply updates
     for (const update of msg.updated) {
+      const localId = netToEntity.get(update.netId);
+      if (localId === undefined) continue;
+
       const reg = wireToComponent.get(update.componentWireId);
       if (!reg) continue;
 
       for (const [fieldName, value] of Object.entries(update.data)) {
         const fieldRef = (reg.component as any)[fieldName];
         if (fieldRef) {
-          em.set(update.entityId, fieldRef, value);
+          em.set(localId, fieldRef, value);
         }
       }
     }

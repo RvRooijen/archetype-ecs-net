@@ -106,7 +106,7 @@ function benchTrackedEncode1Pct() {
     });
 
     const delta = differ.diff();
-    const buf = encoder.encodeDelta(delta, em, registry);
+    const buf = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
     lastSize = buf.byteLength;
   }
   return { ms: (performance.now() - t0) / FRAMES, bytes: lastSize };

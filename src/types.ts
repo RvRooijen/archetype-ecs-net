@@ -1,4 +1,4 @@
-import type { ComponentDef, EntityId } from 'archetype-ecs';
+import type { ComponentDef } from 'archetype-ecs';
 
 // ── Config ──────────────────────────────────────────────
 
@@ -39,9 +39,9 @@ export interface DirtyField {
 }
 
 export interface Delta {
-  created: Map<EntityId, Map<number, Record<string, unknown>>>;  // entityId → wireId → field data
-  destroyed: Set<EntityId>;
-  updated: Map<EntityId, DirtyField[]>;  // entityId → list of dirty components+fields
+  created: Map<number, Map<number, Record<string, unknown>>>;  // netId → wireId → field data
+  destroyed: number[];  // netIds
+  updated: Map<number, DirtyField[]>;  // netId → dirty components+fields
 }
 
 // ── Protocol messages ───────────────────────────────────
@@ -51,14 +51,14 @@ export const MSG_DELTA = 0x02;
 
 export interface FullStateMessage {
   type: typeof MSG_FULL;
-  entities: Map<EntityId, Map<number, Record<string, unknown>>>;  // entityId → wireId → data
+  entities: Map<number, Map<number, Record<string, unknown>>>;  // netId → wireId → data
 }
 
 export interface DeltaMessage {
   type: typeof MSG_DELTA;
-  created: Map<EntityId, Map<number, Record<string, unknown>>>;
-  destroyed: EntityId[];
-  updated: { entityId: EntityId; componentWireId: number; fieldMask: number; data: Record<string, unknown> }[];
+  created: Map<number, Map<number, Record<string, unknown>>>;  // netId → wireId → data
+  destroyed: number[];  // netIds
+  updated: { netId: number; componentWireId: number; fieldMask: number; data: Record<string, unknown> }[];
 }
 
 export type NetMessage = FullStateMessage | DeltaMessage;

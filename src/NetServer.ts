@@ -117,7 +117,7 @@ export function createNetServer(
       return tp.start(config.port, {
         onOpen(clientId) {
           connectedClients++;
-          const fullState = encoder.encodeFullState(em, registry);
+          const fullState = encoder.encodeFullState(em, registry, differ.entityNetIds);
           tp.send(clientId, fullState);
           server.onConnect?.(clientId);
         },
@@ -143,11 +143,11 @@ export function createNetServer(
 
       if (connectedClients === 0) return;
 
-      if (delta.created.size === 0 && delta.destroyed.size === 0 && delta.updated.size === 0) {
+      if (delta.created.size === 0 && delta.destroyed.length === 0 && delta.updated.size === 0) {
         return;
       }
 
-      const buffer = encoder.encodeDelta(delta, em, registry);
+      const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
       tp.broadcast(buffer);
     },
   };

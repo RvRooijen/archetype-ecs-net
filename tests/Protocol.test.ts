@@ -44,39 +44,46 @@ describe('ComponentRegistry', () => {
 describe('Protocol - Full State', () => {
   it('encodes and decodes full state roundtrip', () => {
     const em = createEntityManager();
-    const e1 = em.createEntityWith(Position, { x: 1.5, y: 2.5 }, Health, { hp: 100, maxHp: 100 });
-    const e2 = em.createEntityWith(Position, { x: 10, y: 20 });
+    em.createEntityWith(Position, { x: 1.5, y: 2.5 }, Health, { hp: 100, maxHp: 100 }, Networked);
+    em.createEntityWith(Position, { x: 10, y: 20 }, Networked);
+
+    const differ = createSnapshotDiffer(em, registry);
+    differ.diff();
 
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
 
-    const buffer = encoder.encodeFullState(em, registry);
+    const buffer = encoder.encodeFullState(em, registry, differ.entityNetIds);
     const msg = decoder.decode(buffer, registry);
 
     assert.equal(msg.type, MSG_FULL);
     const full = msg as FullStateMessage;
     assert.equal(full.entities.size, 2);
 
-    const e1Pos = full.entities.get(e1)!.get(0)!;
+    const e1Data = full.entities.get(1)!;
+    const e1Pos = e1Data.get(0)!;
     assert.ok(Math.abs((e1Pos.x as number) - 1.5) < 0.001);
-    const e1Hp = full.entities.get(e1)!.get(1)!;
+    const e1Hp = e1Data.get(1)!;
     assert.equal(e1Hp.hp, 100);
 
-    const e2Data = full.entities.get(e2)!;
+    const e2Data = full.entities.get(2)!;
     assert.equal(e2Data.size, 1);
   });
 
   it('handles string fields', () => {
     const em = createEntityManager();
-    em.createEntityWith(Name, { name: 'Player1' });
+    em.createEntityWith(Name, { name: 'Player1' }, Networked);
+
+    const differ = createSnapshotDiffer(em, registry);
+    differ.diff();
 
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
 
-    const buffer = encoder.encodeFullState(em, registry);
+    const buffer = encoder.encodeFullState(em, registry, differ.entityNetIds);
     const msg = decoder.decode(buffer, registry) as FullStateMessage;
 
-    const nameData = msg.entities.values().next().value!.get(2)!;
+    const nameData = msg.entities.get(1)!.get(2)!;
     assert.equal(nameData.name, 'Player1');
   });
 });
@@ -86,13 +93,13 @@ describe('Protocol - Delta', () => {
     const em = createEntityManager();
     const differ = createSnapshotDiffer(em, registry);
 
-    const e1 = em.createEntityWith(Position, { x: 5, y: 10 }, Networked);
+    em.createEntityWith(Position, { x: 5, y: 10 }, Networked);
     const delta = differ.diff();
 
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
 
-    const buffer = encoder.encodeDelta(delta, em, registry);
+    const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
     const msg = decoder.decode(buffer, registry) as DeltaMessage;
 
     assert.equal(msg.type, MSG_DELTA);
@@ -100,7 +107,7 @@ describe('Protocol - Delta', () => {
     assert.equal(msg.destroyed.length, 0);
     assert.equal(msg.updated.length, 0);
 
-    const posData = msg.created.get(e1)!.get(0)!;
+    const posData = msg.created.get(1)!.get(0)!;
     assert.ok(Math.abs((posData.x as number) - 5) < 0.001);
   });
 
@@ -108,52 +115,50 @@ describe('Protocol - Delta', () => {
     const em = createEntityManager();
     const e1 = em.createEntityWith(Position, { x: 0, y: 0 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
-    differ.diff(); // baseline snapshot
+    differ.diff();
 
     em.destroyEntity(e1);
     const delta = differ.diff();
 
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
-    const buffer = encoder.encodeDelta(delta, em, registry);
+    const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
     const msg = decoder.decode(buffer, registry) as DeltaMessage;
 
     assert.equal(msg.destroyed.length, 1);
-    assert.equal(msg.destroyed[0], e1);
+    assert.equal(msg.destroyed[0], 1);
   });
 
   it('encodes and decodes field updates', () => {
     const em = createEntityManager();
     const e1 = em.createEntityWith(Position, { x: 0, y: 0 }, Health, { hp: 100, maxHp: 100 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
-    differ.diff(); // baseline
+    differ.diff();
 
-    // Only update x, not y
     em.set(e1, Position.x, 42.5);
     const delta = differ.diff();
 
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
-    const buffer = encoder.encodeDelta(delta, em, registry);
+    const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
     const msg = decoder.decode(buffer, registry) as DeltaMessage;
 
     assert.equal(msg.updated.length, 1);
-    assert.equal(msg.updated[0].entityId, e1);
-    assert.equal(msg.updated[0].componentWireId, 0); // Position
+    assert.equal(msg.updated[0].netId, 1);
+    assert.equal(msg.updated[0].componentWireId, 0);
     assert.ok(Math.abs((msg.updated[0].data.x as number) - 42.5) < 0.001);
-    assert.equal(msg.updated[0].data.y, undefined); // y was not dirty
+    assert.equal(msg.updated[0].data.y, undefined);
   });
 
   it('skips empty deltas', () => {
     const em = createEntityManager();
     em.createEntityWith(Position, { x: 0, y: 0 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
-    differ.diff(); // baseline
+    differ.diff();
 
-    // No changes
     const delta = differ.diff();
     assert.equal(delta.created.size, 0);
-    assert.equal(delta.destroyed.size, 0);
+    assert.equal(delta.destroyed.length, 0);
     assert.equal(delta.updated.size, 0);
   });
 });
@@ -161,35 +166,51 @@ describe('Protocol - Delta', () => {
 describe('SnapshotDiffer', () => {
   it('only tracks entities with Networked component', () => {
     const em = createEntityManager();
-    em.createEntityWith(Position, { x: 1, y: 2 }); // NOT networked
-    em.createEntityWith(Position, { x: 3, y: 4 }, Networked); // networked
+    em.createEntityWith(Position, { x: 1, y: 2 });
+    em.createEntityWith(Position, { x: 3, y: 4 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
 
     const delta = differ.diff();
-    assert.equal(delta.created.size, 1); // only the networked one
+    assert.equal(delta.created.size, 1);
   });
 
   it('detects removal of Networked component as destroy', () => {
     const em = createEntityManager();
     const e1 = em.createEntityWith(Position, { x: 0, y: 0 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
-    differ.diff(); // baseline
+    differ.diff();
 
     em.removeComponent(e1, Networked);
     const delta = differ.diff();
-    assert.equal(delta.destroyed.size, 1);
-    assert.ok(delta.destroyed.has(e1));
+    assert.equal(delta.destroyed.length, 1);
+    assert.equal(delta.destroyed[0], 1);
   });
 
   it('no changes between identical ticks', () => {
     const em = createEntityManager();
     em.createEntityWith(Position, { x: 5, y: 10 }, Networked);
     const differ = createSnapshotDiffer(em, registry);
-    differ.diff(); // baseline
+    differ.diff();
 
     const delta = differ.diff();
     assert.equal(delta.created.size, 0);
-    assert.equal(delta.destroyed.size, 0);
+    assert.equal(delta.destroyed.length, 0);
     assert.equal(delta.updated.size, 0);
+  });
+
+  it('assigns stable netIds independent of entity IDs', () => {
+    const em = createEntityManager();
+
+    const temp = em.createEntityWith(Position, { x: 0, y: 0 });
+    const real = em.createEntityWith(Position, { x: 42, y: 99 }, Networked);
+    em.destroyEntity(temp);
+
+    const differ = createSnapshotDiffer(em, registry);
+    const delta = differ.diff();
+
+    assert.equal(delta.created.size, 1);
+    assert.ok(delta.created.has(1), 'netId=1 assigned');
+    assert.equal(differ.entityNetIds.get(real), 1);
+    assert.equal(differ.netIdToEntity.get(1), real);
   });
 });
