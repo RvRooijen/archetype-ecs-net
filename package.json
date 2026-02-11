@@ -1,0 +1,42 @@
+{
+  "name": "archetype-ecs-net",
+  "version": "0.1.0",
+  "description": "Network layer for archetype-ecs: dirty tracking + binary delta sync",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc --noEmit && node --test tests/"
+  },
+  "keywords": [
+    "ecs",
+    "networking",
+    "gamedev",
+    "archetype-ecs",
+    "binary-protocol",
+    "delta-sync"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "archetype-ecs": ">=1.2.0"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "archetype-ecs": "^1.2.0",
+    "typescript": "^5.4.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}
