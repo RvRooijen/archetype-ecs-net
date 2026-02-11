@@ -4,7 +4,7 @@
   <br><br>
   <strong>archetype-ecs-net</strong>
   <br>
-  <sub>Binary delta sync over WebSocket for archetype-ecs. Zero-copy diffing.</sub>
+  <sub>Binary delta sync over WebSocket for archetype-ecs.</sub>
   <br><br>
   <a href="https://www.npmjs.com/package/archetype-ecs-net"><img src="https://img.shields.io/npm/v/archetype-ecs-net.svg?style=flat-square&color=000" alt="npm" /></a>
   <a href="https://github.com/RvRooijen/archetype-ecs-net/blob/master/LICENSE"><img src="https://img.shields.io/npm/l/archetype-ecs-net.svg?style=flat-square&color=000" alt="license" /></a>
@@ -48,7 +48,7 @@ for (let i = 0; i < 1000; i++) {
 const server = createNetServer(em, registry, { port: 9001 })
 await server.start()
 
-// Game loop — systems write directly to TypedArrays, zero overhead
+// Game loop
 setInterval(() => {
   em.forEach([Position, Velocity], (a) => {
     const px = a.field(Position.x), py = a.field(Position.y)
@@ -59,7 +59,7 @@ setInterval(() => {
 }, 50)
 ```
 
-No wrappers, no proxies, no `set()` calls. Your game systems stay exactly the same — `tick()` diffs the raw TypedArrays against a double-buffered snapshot.
+Game systems don't need to change — `tick()` diffs the raw TypedArrays against a double-buffered snapshot.
 
 ---
 
@@ -89,7 +89,7 @@ Game systems write to TypedArrays (front buffer)
      └─────────────┘
 ```
 
-**Double-buffered snapshots** live inside the core ECS. Each tracked archetype maintains a back-buffer copy of its TypedArrays. `flushSnapshots()` copies front→back with a single `.set()` (memcpy) per field — no per-entity overhead.
+Each tracked archetype keeps a back-buffer copy of its TypedArrays. `flushSnapshots()` copies front→back with `.set()` per field.
 
 ---
 
@@ -118,7 +118,7 @@ client.connect('ws://localhost:9001')
 // Every tick: receives binary delta, auto-applied to local EM
 ```
 
-The client uses the standard browser `WebSocket` API — no server-side dependencies needed client-side.
+The client uses the browser `WebSocket` API — no server-side dependencies needed client-side.
 
 ---
 
@@ -158,7 +158,7 @@ Removing the `Networked` tag triggers a destroy on all clients. Adding it trigge
 
 ### Binary protocol
 
-Compact binary format — no JSON, no strings on the wire for field data.
+Binary format. Field values are written with their native byte size, no JSON encoding.
 
 **Full state** (sent on client connect):
 ```
@@ -175,13 +175,13 @@ Compact binary format — no JSON, no strings on the wire for field data.
   [u16 updatedCount]  → entity ID + wire ID + field bitmask + changed values
 ```
 
-Field bitmasks mean only changed fields are sent — if only `Position.x` changed, `Position.y` stays off the wire.
+Only changed fields are sent per entity — if only `Position.x` changed, `Position.y` stays off the wire.
 
 ---
 
 ### Pluggable transport
 
-The default transport uses the `ws` package. Bring your own by implementing `ServerTransport`:
+Default transport uses `ws`. You can provide your own `ServerTransport`:
 
 ```ts
 import { createNetServer, createWsTransport } from 'archetype-ecs-net'
@@ -240,7 +240,7 @@ const msg = decoder.decode(buffer, registry)
 | forEach + diff + encode (1k networked) | 1.57 | +1.24ms |
 | forEach + diff (100k networked, worst) | 86.8 | +86.5ms |
 
-The 1% case (1k networked out of 100k total) adds **< 0.5ms** of diff overhead per frame. Game systems run at full speed — direct TypedArray writes, no `set()` interception.
+1k networked out of 100k total adds ~0.5ms diff overhead per frame.
 
 Run them yourself:
 
@@ -295,7 +295,7 @@ Create a client that connects via WebSocket and auto-applies received state.
 
 ### `ProtocolEncoder` / `ProtocolDecoder`
 
-Low-level binary codec. Pre-allocated write buffer, grows as needed.
+Binary codec. Write buffer grows as needed.
 
 | Method | Description |
 |---|---|
