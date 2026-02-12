@@ -109,6 +109,7 @@ export class ProtocolEncoder {
   }
 
   writeVarint(v: number) {
+    if (v < 0 || v > 0xFFFFFFFF) throw new RangeError(`Varint out of range: ${v}`);
     while (v >= 0x80) {
       this.writeU8((v & 0x7F) | 0x80);
       v >>>= 7;
@@ -155,6 +156,7 @@ export class ProtocolEncoder {
   ): ArrayBuffer {
     this.reset();
     this.writeU8(MSG_FULL);
+    this.writeU32(registry.hash);
 
     this.writeU16(entityNetIds.size);
 
@@ -251,6 +253,7 @@ export class ProtocolDecoder {
     let shift = 0;
     let b: number;
     do {
+      if (shift >= 35) throw new Error('Varint too long (corrupt data or >5 bytes)');
       b = this.readU8();
       v |= (b & 0x7F) << shift;
       shift += 7;
@@ -297,6 +300,13 @@ export class ProtocolDecoder {
   }
 
   private decodeFullState(registry: ComponentRegistry): FullStateMessage {
+    const remoteHash = this.readU32();
+    if (remoteHash !== registry.hash) {
+      throw new Error(
+        `Registry mismatch: server hash 0x${remoteHash.toString(16)} !== client hash 0x${registry.hash.toString(16)}. ` +
+        `Ensure server and client use identical component registrations (same names, fields, types, and order).`
+      );
+    }
     const entityCount = this.readU16();
     const entities = new Map<number, Map<number, Record<string, unknown>>>();
 
@@ -354,6 +364,13 @@ export class ProtocolDecoder {
         const reg = registry.byWireId(wireId);
         if (!reg) throw new Error(`Unknown wire ID: ${wireId}`);
 
+        const validMask = (1 << reg.fields.length) - 1;
+        if (fieldMask & ~validMask) {
+          throw new Error(
+            `Invalid field mask 0x${fieldMask.toString(16)} for wire ID ${wireId}: ` +
+            `has bits set beyond ${reg.fields.length} fields`
+          );
+        }
         const data: Record<string, unknown> = {};
         for (let f = 0; f < reg.fields.length; f++) {
           if (fieldMask & (1 << f)) {

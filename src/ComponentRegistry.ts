@@ -24,12 +24,24 @@ const TYPE_BYTE_SIZE: Record<WireType, number> = {
 export interface ComponentRegistry {
   /** All registered components in wire ID order */
   readonly components: readonly RegisteredComponent[];
+  /** Deterministic 32-bit hash of the registry schema (names + field names + types) */
+  readonly hash: number;
   /** Look up by wire ID */
   byWireId(id: number): RegisteredComponent | undefined;
   /** Look up by component symbol */
   bySymbol(sym: symbol): RegisteredComponent | undefined;
   /** Look up by wire name */
   byName(name: string): RegisteredComponent | undefined;
+}
+
+/** Simple FNV-1a 32-bit hash */
+function fnv1a(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 export function createComponentRegistry(registrations: ComponentRegistration[]): ComponentRegistry {
@@ -77,8 +89,25 @@ export function createComponentRegistry(registrations: ComponentRegistration[]):
     byNameMap.set(reg.name, entry);
   }
 
+  // Validate wireIds are sequential (defensive against future refactoring)
+  for (let i = 0; i < components.length; i++) {
+    if (components[i].wireId !== i) {
+      throw new Error(`Internal error: wireId mismatch at index ${i} (expected ${i}, got ${components[i].wireId})`);
+    }
+  }
+
+  // Build deterministic schema fingerprint: "name:field1:type1,field2:type2;..."
+  let schemaStr = '';
+  for (const c of components) {
+    schemaStr += c.name + ':';
+    for (const f of c.fields) schemaStr += f.name + ':' + f.type + ',';
+    schemaStr += ';';
+  }
+  const hash = fnv1a(schemaStr);
+
   return {
     components,
+    hash,
     byWireId: (id) => byWireIdMap.get(id),
     bySymbol: (sym) => bySymbolMap.get(sym),
     byName: (name) => byNameMap.get(name),

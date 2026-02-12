@@ -191,6 +191,10 @@ export function createSnapshotDiffer(
               }
             }
             encoder.patchU8(compCountOff, compCount);
+          } else {
+            // Reset masks even when no dirty fields, to prevent stale bits
+            // leaking to the next entity if archetype iteration order changes
+            for (let w = 0; w <= maxWireId; w++) dirtyMasks[w] = 0;
           }
         }
       });

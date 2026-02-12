@@ -130,12 +130,17 @@ export function createNetClient(
       };
 
       ws.onclose = () => {
+        if (ws === null) return; // already handled by onerror
         ws = null;
         client.onDisconnected?.();
       };
 
       ws.onerror = () => {
-        ws?.close();
+        if (ws === null) return;
+        const sock = ws;
+        ws = null;
+        client.onDisconnected?.();
+        try { sock.close(); } catch { /* ignore */ }
       };
     },
 
