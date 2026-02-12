@@ -124,7 +124,7 @@ The client uses the browser `WebSocket` API — no server-side dependencies need
 
 ### Component registry
 
-Both server and client must register the same components in the same order. This assigns stable `u8` wire IDs (0–255) used in the binary protocol.
+Both server and client must register the same components in the same order. This assigns stable `u8` wire IDs (0–255) used in the binary protocol. Each component supports up to 16 fields (u16 bitmask).
 
 ```ts
 const registry = createComponentRegistry([
@@ -163,19 +163,21 @@ Binary format. Field values are written with their native byte size, no JSON enc
 **Full state** (sent on client connect):
 ```
 [u8 0x01] [u16 entityCount]
-  for each: [u32 netId] [u8 componentCount]
+  for each: [varint netId] [u8 componentCount]
     for each: [u8 wireId] [field values in schema order]
 ```
 
 **Delta** (sent every tick):
 ```
 [u8 0x02]
-  [u16 createdCount]  → full component data per entity
-  [u16 destroyedCount] → netIds only
-  [u16 updatedCount]  → netId + wire ID + field bitmask + changed values
+  [u16 createdCount]  → varint netId + full component data per entity
+  [u16 destroyedCount] → varint netIds only
+  [u16 updatedEntityCount]
+    for each: [varint netId] [u8 compCount]
+      for each: [u8 wireId] [u16 fieldMask] [changed field values]
 ```
 
-The wire protocol uses stable network IDs (`netId`) instead of raw entity IDs. The server assigns each networked entity a monotonic `netId` on creation; the client maintains a `netId → localEntityId` mapping. This decouples server and client entity ID spaces.
+Network IDs (`netId`) are varint-encoded (LEB128) — 1 byte for IDs < 128, 2 bytes for < 16K. Updates are grouped per entity to avoid repeating the netId for each dirty component. The wire protocol uses stable netIds instead of raw entity IDs; the client maintains a `netId → localEntityId` mapping.
 
 Only changed fields are sent per entity — if only `Position.x` changed, `Position.y` stays off the wire.
 
@@ -236,11 +238,11 @@ const msg = decoder.decode(buffer, registry)
 
 | Test | ms/frame | overhead | wire |
 |---|---:|---:|---:|
-| Raw game tick (1M, 4 archetypes) | 3.24 | baseline | |
-| + diffAndEncode (4k networked, 1%) | 5.53 | +2.29ms | 110 KB |
-| + diffAndEncode (40k networked, 10%) | 22.00 | +18.75ms | 1.1 MB |
+| Raw game tick (1M, 4 archetypes) | 3.51 | baseline | |
+| + diffAndEncode (4k networked, 1%) | 5.59 | +2.08ms | 97 KB |
+| + diffAndEncode (40k networked, 10%) | 23.96 | +20.45ms | 995 KB |
 
-`diffAndEncode()` diffs and encodes in a single fused pass — no intermediate allocations. At 1% networked (4k entities), the total overhead is 2.3ms — well within a 60fps budget.
+`diffAndEncode()` diffs and encodes in a single fused pass — no intermediate allocations, varint netIds, updates grouped per entity. At 1% networked (4k entities), the total overhead is 2.1ms — well within a 60fps budget.
 
 Run them yourself:
 

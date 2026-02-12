@@ -108,6 +108,14 @@ export class ProtocolEncoder {
     this.view.setUint16(off, v, true);
   }
 
+  writeVarint(v: number) {
+    while (v >= 0x80) {
+      this.writeU8((v & 0x7F) | 0x80);
+      v >>>= 7;
+    }
+    this.writeU8(v);
+  }
+
   writeField(type: WireType, value: unknown) {
     switch (type) {
       case 'f32': this.writeF32(value as number); break;
@@ -151,7 +159,7 @@ export class ProtocolEncoder {
     this.writeU16(entityNetIds.size);
 
     for (const [entityId, netId] of entityNetIds) {
-      this.writeU32(netId);
+      this.writeVarint(netId);
 
       // Count components this entity has
       const comps: { reg: (typeof registry.components)[number]; data: Record<string, unknown> }[] = [];
@@ -238,6 +246,18 @@ export class ProtocolDecoder {
     return str;
   }
 
+  private readVarint(): number {
+    let v = 0;
+    let shift = 0;
+    let b: number;
+    do {
+      b = this.readU8();
+      v |= (b & 0x7F) << shift;
+      shift += 7;
+    } while (b >= 0x80);
+    return v >>> 0;
+  }
+
   private readField(type: WireType): unknown {
     switch (type) {
       case 'f32': return this.readF32();
@@ -281,7 +301,7 @@ export class ProtocolDecoder {
     const entities = new Map<number, Map<number, Record<string, unknown>>>();
 
     for (let e = 0; e < entityCount; e++) {
-      const netId = this.readU32();
+      const netId = this.readVarint();
       const compCount = this.readU8();
       const compMap = new Map<number, Record<string, unknown>>();
 
@@ -303,7 +323,7 @@ export class ProtocolDecoder {
     const createdCount = this.readU16();
     const created = new Map<number, Map<number, Record<string, unknown>>>();
     for (let i = 0; i < createdCount; i++) {
-      const netId = this.readU32();
+      const netId = this.readVarint();
       const compCount = this.readU8();
       const compMap = new Map<number, Record<string, unknown>>();
       for (let c = 0; c < compCount; c++) {
@@ -319,27 +339,30 @@ export class ProtocolDecoder {
     const destroyedCount = this.readU16();
     const destroyed: number[] = [];
     for (let i = 0; i < destroyedCount; i++) {
-      destroyed.push(this.readU32());
+      destroyed.push(this.readVarint());
     }
 
-    // Updated
-    const updatedCount = this.readU16();
+    // Updated (grouped by entity)
+    const updatedEntityCount = this.readU16();
     const updated: DeltaMessage['updated'] = [];
-    for (let i = 0; i < updatedCount; i++) {
-      const netId = this.readU32();
-      const wireId = this.readU8();
-      const fieldMask = this.readU16();
-      const reg = registry.byWireId(wireId);
-      if (!reg) throw new Error(`Unknown wire ID: ${wireId}`);
+    for (let i = 0; i < updatedEntityCount; i++) {
+      const netId = this.readVarint();
+      const compCount = this.readU8();
+      for (let c = 0; c < compCount; c++) {
+        const wireId = this.readU8();
+        const fieldMask = this.readU16();
+        const reg = registry.byWireId(wireId);
+        if (!reg) throw new Error(`Unknown wire ID: ${wireId}`);
 
-      const data: Record<string, unknown> = {};
-      for (let f = 0; f < reg.fields.length; f++) {
-        if (fieldMask & (1 << f)) {
-          data[reg.fields[f].name] = this.readField(reg.fields[f].type);
+        const data: Record<string, unknown> = {};
+        for (let f = 0; f < reg.fields.length; f++) {
+          if (fieldMask & (1 << f)) {
+            data[reg.fields[f].name] = this.readField(reg.fields[f].type);
+          }
         }
-      }
 
-      updated.push({ netId, componentWireId: wireId, fieldMask, data });
+        updated.push({ netId, componentWireId: wireId, fieldMask, data });
+      }
     }
 
     return { type: MSG_DELTA, created, destroyed, updated };

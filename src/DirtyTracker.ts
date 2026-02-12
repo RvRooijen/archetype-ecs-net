@@ -91,7 +91,7 @@ export function createSnapshotDiffer(
         const netId = nextNetId++;
         entityToNetId.set(eid, netId);
         netIdToEntityMap.set(netId, eid);
-        encoder.writeU32(netId);
+        encoder.writeVarint(netId);
 
         const compCountOff = encoder.reserveU8();
         let compCount = 0;
@@ -113,7 +113,7 @@ export function createSnapshotDiffer(
 
       // Destroyed
       encoder.writeU16(destroyed.length);
-      for (const netId of destroyed) encoder.writeU32(netId);
+      for (const netId of destroyed) encoder.writeVarint(netId);
 
       // Updated — backpatch count, write directly from front buffers
       const updateCountOff = encoder.reserveU16();
@@ -167,14 +167,18 @@ export function createSnapshotDiffer(
           }
 
           if (hasDirty) {
-            // Encode each dirty component directly
+            updateCount++;
+            encoder.writeVarint(netId);
+            const compCountOff = encoder.reserveU8();
+            let compCount = 0;
+
+            // Encode each dirty component
             for (let w = 0; w <= maxWireId; w++) {
               const mask = dirtyMasks[w];
               if (mask === 0) continue;
               dirtyMasks[w] = 0;
 
-              updateCount++;
-              encoder.writeU32(netId);
+              compCount++;
               encoder.writeU8(w);
               encoder.writeU16(mask);
 
@@ -186,6 +190,7 @@ export function createSnapshotDiffer(
                 }
               }
             }
+            encoder.patchU8(compCountOff, compCount);
           }
         }
       });
