@@ -208,40 +208,14 @@ interface ServerTransport {
 
 ---
 
-### Examples
+### Example
 
-- **[Minimal](example/minimal/)** — Simple server + browser client (~6 files, orbiting circles)
-- **[RPG demo](example/)** — Full RPG with interest management, pathfinding, chunk-based visibility
+**[RPG demo](example/)** — Full RPG with interest management, pathfinding, chunk-based visibility
 
-Run the minimal example:
 ```bash
 npm run build                          # build dist/ for browser imports
-npx tsx example/minimal/server.ts      # start server
-# open example/minimal/client.html in browser (serve from project root)
-```
-
----
-
-### Using the differ directly
-
-For custom networking setups, use `createSnapshotDiffer` and the protocol encoder/decoder directly:
-
-```ts
-import { createSnapshotDiffer, Networked, ProtocolEncoder, ProtocolDecoder } from 'archetype-ecs-net'
-
-const differ = createSnapshotDiffer(em, registry)
-const encoder = new ProtocolEncoder()
-const decoder = new ProtocolDecoder()
-
-// First call establishes baseline (encodes all Networked entities as "created")
-differ.diffAndEncode(encoder)
-
-// Game loop — diff + encode in a single fused pass
-const buffer = differ.diffAndEncode(encoder)
-// → send buffer to clients
-
-// On receive
-const msg = decoder.decode(buffer, registry)
+npx tsx example/server/main.ts         # start server
+# open example/client/index.html in browser (serve from project root)
 ```
 
 ---
@@ -276,16 +250,6 @@ Create a registry mapping components to wire IDs. Must be identical on server an
 
 Tag component. Add to any entity that should be synced over the network.
 
-### `createSnapshotDiffer(em, registry)`
-
-Create a differ that compares the current ECS state against a double-buffered snapshot. Returns a `SnapshotDiffer`:
-
-| Method / Property | Description |
-|---|---|
-| `diffAndEncode(encoder)` | Diff + binary encode in one fused pass — returns `ArrayBuffer` directly |
-| `entityNetIds` | `ReadonlyMap<EntityId, number>` — entity → netId mapping |
-| `netIdToEntity` | `ReadonlyMap<number, EntityId>` — netId → entity mapping |
-
 ### `createNetServer(em, registry, config, transport?)`
 
 Create a network server that diffs and broadcasts on every `tick()`.
@@ -294,10 +258,15 @@ Create a network server that diffs and broadcasts on every `tick()`.
 |---|---|
 | `start()` | Start listening on configured port |
 | `stop()` | Stop server, disconnect all clients |
-| `tick()` | Diff → encode → broadcast delta to all clients |
+| `tick(filter?)` | Diff → encode → send. No filter = broadcast. With filter = per-client interest |
+| `send(clientId, data)` | Send a custom message to a specific client |
 | `clientCount` | Number of connected clients |
+| `entityNetIds` | `ReadonlyMap<EntityId, number>` — entity → netId mapping |
 | `onConnect` | Callback when client connects (receives full state) |
 | `onDisconnect` | Callback when client disconnects |
+| `onMessage` | Callback when client sends a message |
+
+The `filter` parameter is an `InterestFilter: (clientId) => ReadonlySet<number>` that returns the set of netIds visible to that client. Entities entering/leaving a client's interest set are sent as creates/destroys.
 
 ### `createNetClient(em, registry)`
 
@@ -310,15 +279,6 @@ Create a client that connects via WebSocket and auto-applies received state.
 | `connected` | Whether currently connected |
 | `onConnected` | Callback on successful connection |
 | `onDisconnected` | Callback on disconnect |
-
-### `ProtocolEncoder` / `ProtocolDecoder`
-
-Binary codec. Write buffer grows as needed.
-
-| Method | Description |
-|---|---|
-| `encoder.encodeFullState(em, registry, entityNetIds)` | Encode all Networked entities → `ArrayBuffer` |
-| `decoder.decode(buffer, registry)` | Decode → `FullStateMessage \| DeltaMessage` |
 
 ---
 

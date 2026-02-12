@@ -1,23 +1,13 @@
 import { createEntityManager } from 'archetype-ecs';
 import type { EntityId } from 'archetype-ecs';
 // Use 'archetype-ecs-net' when outside this repo
-import { ProtocolEncoder } from '../../src/index.js';
+import { Networked } from '../../src/index.js';
 import { Position, EntityType, Health, Appearance } from '../shared.js';
 import { ChunkManager } from './chunks.js';
 import { CHUNK_SIZE } from '../shared.js';
 
 export const em = createEntityManager();
-export const encoder = new ProtocolEncoder();
 export const chunks = new ChunkManager(CHUNK_SIZE);
-
-let nextNetId = 1;
-export const entityToNetId = new Map<EntityId, number>();
-
-export function getNetId(eid: EntityId): number {
-  let id = entityToNetId.get(eid);
-  if (id === undefined) { id = nextNetId++; entityToNetId.set(eid, id); }
-  return id;
-}
 
 export function spawnEntity(x: number, y: number, kind: number, hp: number, variant: number): EntityId {
   const eid = em.createEntityWith(
@@ -25,9 +15,9 @@ export function spawnEntity(x: number, y: number, kind: number, hp: number, vari
     EntityType, { kind },
     Health, { current: hp, max: hp },
     Appearance, { variant },
+    Networked,
   );
   chunks.add(eid, x, y);
-  getNetId(eid);
   return eid;
 }
 
@@ -35,7 +25,6 @@ export function destroyEntity(eid: EntityId) {
   const x = em.get(eid, Position.x) as number;
   const y = em.get(eid, Position.y) as number;
   chunks.remove(eid, x, y);
-  entityToNetId.delete(eid);
   em.destroyEntity(eid);
 }
 

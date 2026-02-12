@@ -1,4 +1,4 @@
-import type { EntityManager } from 'archetype-ecs';
+import type { EntityId, EntityManager } from 'archetype-ecs';
 import type { ComponentRegistry } from './ComponentRegistry.js';
 import { createSnapshotDiffer } from './DirtyTracker.js';
 import type { InterestFilter } from './InterestManager.js';
@@ -101,11 +101,16 @@ export interface NetServer {
   stop(): Promise<void>;
   /** Diff, encode, send. Without filter: broadcast to all. With filter: per-client interest. */
   tick(filter?: InterestFilter): void;
+  /** Send a custom message to a specific client */
+  send(clientId: ClientId, data: ArrayBuffer): void;
   /** Number of connected clients */
   readonly clientCount: number;
+  /** Entity → netId mapping (assigned during tick) */
+  readonly entityNetIds: ReadonlyMap<EntityId, number>;
   /** Callbacks */
   onConnect: ((clientId: ClientId) => void) | null;
   onDisconnect: ((clientId: ClientId) => void) | null;
+  onMessage: ((clientId: ClientId, data: ArrayBuffer) => void) | null;
 }
 
 export function createNetServer(
@@ -123,9 +128,18 @@ export function createNetServer(
   const server: NetServer = {
     onConnect: null,
     onDisconnect: null,
+    onMessage: null,
 
     get clientCount() {
       return clientIds.size;
+    },
+
+    get entityNetIds(): ReadonlyMap<EntityId, number> {
+      return differ.entityNetIds;
+    },
+
+    send(clientId: ClientId, data: ArrayBuffer) {
+      tp.send(clientId, data);
     },
 
     start() {
@@ -147,8 +161,8 @@ export function createNetServer(
           server.onDisconnect?.(clientId);
         },
 
-        onMessage(_clientId, _data) {
-          // Client → server messages not handled in v0.1.0
+        onMessage(clientId, data) {
+          server.onMessage?.(clientId, data);
         },
       });
     },

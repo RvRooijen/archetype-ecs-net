@@ -1,22 +1,25 @@
 // Use 'archetype-ecs-net' when outside this repo
-import { createWsTransport } from '../../src/index.js';
-import { WORLD_TILES, TICK_MS, MSG_TILE_MAP, MSG_PLAYER_ID } from '../shared.js';
-import { entityToNetId, getNetId } from './entities.js';
+import { createNetServer } from '../../src/index.js';
+import { registry, WORLD_TILES, TICK_MS, MSG_TILE_MAP, MSG_PLAYER_ID } from '../shared.js';
+import { em } from './entities.js';
 import { tileMap, generateWorld } from './world.js';
 import {
-  addPlayer, removePlayer, queueInput,
-  processInputs, movePlayers, npcWanderSystem, respawnSystem, sendStateToClients,
+  addPlayer, removePlayer, queueInput, clientToPlayer, getInterest,
+  processInputs, movePlayers, npcWanderSystem, respawnSystem,
 } from './systems.js';
 import type { ClientId } from '../../src/index.js';
 
 // ── World ──────────────────────────────────────────────
 
 generateWorld();
-console.log(`World generated: ${WORLD_TILES}x${WORLD_TILES} tiles, ${entityToNetId.size} entities`);
+console.log(`World generated: ${WORLD_TILES}x${WORLD_TILES} tiles`);
 
-// ── Transport ──────────────────────────────────────────
+// ── Server ──────────────────────────────────────────────
 
-const transport = createWsTransport();
+const server = createNetServer(em, registry, { port: 9001 });
+
+// NetIds are assigned during tick(), so we defer sending player IDs
+const pendingPlayerIds = new Set<ClientId>();
 
 function sendTileMap(clientId: ClientId) {
   const buf = new ArrayBuffer(2 + tileMap.length);
@@ -24,7 +27,7 @@ function sendTileMap(clientId: ClientId) {
   view.setUint8(0, MSG_TILE_MAP);
   view.setUint8(1, WORLD_TILES);
   new Uint8Array(buf, 2).set(tileMap);
-  transport.send(clientId, buf);
+  server.send(clientId, buf);
 }
 
 function sendPlayerId(clientId: ClientId, netId: number) {
@@ -32,27 +35,27 @@ function sendPlayerId(clientId: ClientId, netId: number) {
   const view = new DataView(buf);
   view.setUint8(0, MSG_PLAYER_ID);
   view.setUint16(1, netId, true);
-  transport.send(clientId, buf);
+  server.send(clientId, buf);
 }
 
-await transport.start(9001, {
-  onOpen(clientId) {
-    const eid = addPlayer(clientId);
-    sendTileMap(clientId);
-    sendPlayerId(clientId, getNetId(eid));
-    console.log(`Client ${clientId} connected (player netId=${getNetId(eid)})`);
-  },
+server.onConnect = (clientId) => {
+  addPlayer(clientId);
+  sendTileMap(clientId);
+  pendingPlayerIds.add(clientId);
+  console.log(`Client ${clientId} connected`);
+};
 
-  onClose(clientId) {
-    removePlayer(clientId);
-    console.log(`Client ${clientId} disconnected`);
-  },
+server.onDisconnect = (clientId) => {
+  removePlayer(clientId);
+  pendingPlayerIds.delete(clientId);
+  console.log(`Client ${clientId} disconnected`);
+};
 
-  onMessage(clientId, data) {
-    queueInput(clientId, data);
-  },
-});
+server.onMessage = (clientId, data) => {
+  queueInput(clientId, data);
+};
 
+await server.start();
 console.log(`Server listening on ws://localhost:9001 (${TICK_MS}ms tick)`);
 
 // ── Game loop ──────────────────────────────────────────
@@ -62,5 +65,17 @@ setInterval(() => {
   movePlayers();
   npcWanderSystem();
   respawnSystem();
-  sendStateToClients(transport);
+  server.tick((cid) => getInterest(cid, server));
+
+  // Send deferred player IDs (netIds are now assigned after tick)
+  for (const clientId of pendingPlayerIds) {
+    const eid = clientToPlayer.get(clientId);
+    if (eid === undefined) continue;
+    const netId = server.entityNetIds.get(eid);
+    if (netId !== undefined) {
+      sendPlayerId(clientId, netId);
+      pendingPlayerIds.delete(clientId);
+      console.log(`  → player netId=${netId}`);
+    }
+  }
 }, TICK_MS);

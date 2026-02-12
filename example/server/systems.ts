@@ -1,13 +1,12 @@
 import type { EntityId } from 'archetype-ecs';
-import type { ClientId } from '../../src/index.js';
-import type { ServerTransport } from '../../src/index.js';
+import type { ClientId, NetServer } from '../../src/index.js';
 import {
-  Position, EntityType, Health, Appearance, registry,
+  Position, EntityType, Health, Appearance,
   KIND_PLAYER, KIND_TREE, KIND_ROCK, KIND_NPC,
   WORLD_TILES, VIEW_RANGE,
   INPUT_MOVE, INPUT_INTERACT, ACTION_CHOP, ACTION_MINE,
 } from '../shared.js';
-import { em, encoder, chunks, entityToNetId, getNetId, spawnEntity, destroyEntity, entityAt } from './entities.js';
+import { em, chunks, spawnEntity, destroyEntity, entityAt } from './entities.js';
 import { isWalkable } from './world.js';
 import { bfs } from './pathfinding.js';
 
@@ -47,6 +46,29 @@ export function removePlayer(clientId: ClientId) {
 export function queueInput(clientId: ClientId, data: ArrayBuffer) {
   const queue = inputQueue.get(clientId);
   if (queue) queue.push(data);
+}
+
+// ── Interest filter ────────────────────────────────────
+
+export function getInterest(clientId: ClientId, server: NetServer): Set<number> {
+  const eid = clientToPlayer.get(clientId);
+  if (eid === undefined) return new Set();
+
+  const px = em.get(eid, Position.x) as number;
+  const py = em.get(eid, Position.y) as number;
+  const interest = new Set<number>();
+  const sets = chunks.queryRange(px, py, VIEW_RANGE, WORLD_TILES);
+  for (const set of sets) {
+    for (const nearby of set) {
+      const ex = em.get(nearby, Position.x) as number;
+      const ey = em.get(nearby, Position.y) as number;
+      if (Math.abs(ex - px) <= VIEW_RANGE && Math.abs(ey - py) <= VIEW_RANGE) {
+        const netId = server.entityNetIds.get(nearby);
+        if (netId !== undefined) interest.add(netId);
+      }
+    }
+  }
+  return interest;
 }
 
 // ── Helpers ────────────────────────────────────────────
@@ -165,20 +187,25 @@ export function movePlayers() {
 
 export function npcWanderSystem() {
   const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]];
-  for (const [eid] of entityToNetId) {
-    if (em.get(eid, EntityType.kind) !== KIND_NPC) continue;
-    if (Math.random() > 0.3) continue;
+  em.forEach([EntityType], (a) => {
+    const kinds = a.field(EntityType.kind) as Int8Array;
+    const eids = a.entityIds;
+    for (let i = 0; i < a.count; i++) {
+      if (kinds[i] !== KIND_NPC) continue;
+      if (Math.random() > 0.3) continue;
 
-    const [dx, dy] = dirs[(Math.random() * 4) | 0];
-    const ox = em.get(eid, Position.x) as number;
-    const oy = em.get(eid, Position.y) as number;
-    const nx = ox + dx, ny = oy + dy;
-    if (isWalkable(nx, ny)) {
-      em.set(eid, Position.x, nx);
-      em.set(eid, Position.y, ny);
-      chunks.move(eid, ox, oy, nx, ny);
+      const eid = eids[i];
+      const [dx, dy] = dirs[(Math.random() * 4) | 0];
+      const ox = em.get(eid, Position.x) as number;
+      const oy = em.get(eid, Position.y) as number;
+      const nx = ox + dx, ny = oy + dy;
+      if (isWalkable(nx, ny)) {
+        em.set(eid, Position.x, nx);
+        em.set(eid, Position.y, ny);
+        chunks.move(eid, ox, oy, nx, ny);
+      }
     }
-  }
+  });
 }
 
 export function respawnSystem() {
@@ -192,29 +219,4 @@ export function respawnSystem() {
       respawnQueue.splice(i, 1);
     }
   }
-}
-
-export function sendStateToClients(transport: ServerTransport) {
-  for (const [clientId, eid] of clientToPlayer) {
-    const px = em.get(eid, Position.x) as number;
-    const py = em.get(eid, Position.y) as number;
-    const nearby = entitiesNear(px, py, VIEW_RANGE);
-    const buffer = encoder.encodeFullState(em, registry, nearby);
-    transport.send(clientId, buffer);
-  }
-}
-
-function entitiesNear(cx: number, cy: number, range: number): Map<EntityId, number> {
-  const result = new Map<EntityId, number>();
-  const sets = chunks.queryRange(cx, cy, range, WORLD_TILES);
-  for (const set of sets) {
-    for (const eid of set) {
-      const ex = em.get(eid, Position.x) as number;
-      const ey = em.get(eid, Position.y) as number;
-      if (Math.abs(ex - cx) <= range && Math.abs(ey - cy) <= range) {
-        result.set(eid, getNetId(eid));
-      }
-    }
-  }
-  return result;
 }

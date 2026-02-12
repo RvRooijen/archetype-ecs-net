@@ -1,5 +1,5 @@
 import { INPUT_MOVE, INPUT_INTERACT } from './constants.js';
-import { decodeFullState } from './protocol.js';
+import { decodeFullState, applyDelta } from './protocol.js';
 
 export function connect(state) {
   const ws = new WebSocket('ws://localhost:9001');
@@ -23,6 +23,8 @@ export function connect(state) {
       state.myNetId = new DataView(buf).getUint16(1, true);
     } else if (type === 0x01) { // full state
       state.entities = decodeFullState(buf);
+    } else if (type === 0x02) { // delta
+      applyDelta(buf, state.entities);
     }
   };
 }
