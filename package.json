@@ -1,6 +1,6 @@
 {
   "name": "archetype-ecs-net",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Network layer for archetype-ecs: dirty tracking + binary delta sync",
   "type": "module",
   "main": "dist/index.js",
