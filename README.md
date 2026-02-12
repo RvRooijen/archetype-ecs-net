@@ -162,7 +162,7 @@ Binary format. Field values are written with their native byte size, no JSON enc
 
 **Full state** (sent on client connect):
 ```
-[u8 0x01] [u16 entityCount]
+[u8 0x01] [u32 registryHash] [u16 entityCount]
   for each: [varint netId] [u8 componentCount]
     for each: [u8 wireId] [field values in schema order]
 ```
@@ -204,6 +204,20 @@ interface ServerTransport {
   send(clientId: ClientId, data: ArrayBuffer): void
   broadcast(data: ArrayBuffer): void
 }
+```
+
+---
+
+### Examples
+
+- **[Minimal](example/minimal/)** — Simple server + browser client (~6 files, orbiting circles)
+- **[RPG demo](example/)** — Full RPG with interest management, pathfinding, chunk-based visibility
+
+Run the minimal example:
+```bash
+npm run build                          # build dist/ for browser imports
+npx tsx example/minimal/server.ts      # start server
+# open example/minimal/client.html in browser (serve from project root)
 ```
 
 ---
