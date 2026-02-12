@@ -1,0 +1,11 @@
+// Must match server shared.ts
+export const WORLD = 64;
+export const KIND_PLAYER = 1;
+export const KIND_TREE = 2;
+export const KIND_ROCK = 3;
+export const KIND_NPC = 4;
+export const INPUT_MOVE = 1;
+export const INPUT_INTERACT = 2;
+export const ACTION_CHOP = 1;
+export const ACTION_MINE = 2;
+export const ACTION_EXAMINE = 3;

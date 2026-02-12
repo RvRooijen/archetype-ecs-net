@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ChunkManager } from '../example/server/chunks.js';
-import { bfs } from '../example/server/pathfinding.js';
+import { ChunkManager } from './server/chunks.js';
+import { bfs } from './server/pathfinding.js';
 
 describe('ChunkManager', () => {
   it('tracks entities across chunks and queries by range', () => {
