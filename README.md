@@ -215,7 +215,7 @@ interface ServerTransport {
 ```bash
 npm run build                          # build dist/ for browser imports
 npx tsx example/server/main.ts         # start server
-# open example/client/index.html in browser (serve from project root)
+# open example/client.html in browser (serve from project root)
 ```
 
 ---
