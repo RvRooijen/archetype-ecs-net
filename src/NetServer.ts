@@ -139,15 +139,13 @@ export function createNetServer(
     },
 
     tick() {
-      const delta = differ.diff();
+      const buffer = differ.diffAndEncode(encoder);
 
       if (connectedClients === 0) return;
 
-      if (delta.created.size === 0 && delta.destroyed.length === 0 && delta.updated.size === 0) {
-        return;
-      }
+      // Skip broadcast if delta is empty (header-only: 1 byte msgType + 3x u16 zeros = 7 bytes)
+      if (buffer.byteLength <= 7) return;
 
-      const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity);
       tp.broadcast(buffer);
     },
   };

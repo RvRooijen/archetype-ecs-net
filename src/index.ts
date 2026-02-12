@@ -4,7 +4,7 @@ export type { ComponentRegistry } from './ComponentRegistry.js';
 export { createSnapshotDiffer, Networked } from './DirtyTracker.js';
 export type { SnapshotDiffer } from './DirtyTracker.js';
 
-export { ProtocolEncoder, ProtocolDecoder, encodeFullState, encodeDelta, decode } from './Protocol.js';
+export { ProtocolEncoder, ProtocolDecoder, encodeFullState, decode } from './Protocol.js';
 
 export { createNetServer, createWsTransport } from './NetServer.js';
 export type { NetServer, ServerTransport, TransportHandlers } from './NetServer.js';
@@ -18,8 +18,6 @@ export type {
   RegisteredComponent,
   FieldInfo,
   WireType,
-  Delta,
-  DirtyField,
   FullStateMessage,
   DeltaMessage,
   NetMessage,

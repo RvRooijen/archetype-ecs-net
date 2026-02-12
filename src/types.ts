@@ -31,19 +31,6 @@ export interface RegisteredComponent {
   fields: FieldInfo[];
 }
 
-// ── Delta / flush output ────────────────────────────────
-
-export interface DirtyField {
-  componentWireId: number;
-  fields: Set<string>;
-}
-
-export interface Delta {
-  created: Map<number, Map<number, Record<string, unknown>>>;  // netId → wireId → field data
-  destroyed: number[];  // netIds
-  updated: Map<number, DirtyField[]>;  // netId → dirty components+fields
-}
-
 // ── Protocol messages ───────────────────────────────────
 
 export const MSG_FULL = 0x01;

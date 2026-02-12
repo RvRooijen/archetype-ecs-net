@@ -25,11 +25,11 @@ describe('Entity ID sync via netId', () => {
 
     // Differ assigns netId=1
     const differ = createSnapshotDiffer(serverEm, registry);
-    differ.diff();
+    const encoder = new ProtocolEncoder();
+    differ.diffAndEncode(encoder); // baseline
     assert.equal(differ.entityNetIds.get(real), 1);
 
     // ── Encode full state with netId ────────────────────
-    const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
     const fullBuf = encoder.encodeFullState(serverEm, registry, differ.entityNetIds);
     const fullMsg = decoder.decode(fullBuf, registry) as FullStateMessage;
@@ -74,10 +74,10 @@ describe('Entity ID sync via netId', () => {
     const d = serverEm.createEntityWith(Position, { x: 50, y: 60 }, Networked);
 
     const differ = createSnapshotDiffer(serverEm, registry);
-    differ.diff(); // assigns netId=1 to c, netId=2 to d
-
     const encoder = new ProtocolEncoder();
     const decoder = new ProtocolDecoder();
+
+    differ.diffAndEncode(encoder); // assigns netId=1 to c, netId=2 to d
 
     // ── Full state → client ─────────────────────────────
     const fullBuf = encoder.encodeFullState(serverEm, registry, differ.entityNetIds);
@@ -98,9 +98,7 @@ describe('Entity ID sync via netId', () => {
 
     // ── Server updates entity c (netId=1) ───────────────
     serverEm.set(c, Position.x, 999);
-    const delta = differ.diff();
-
-    const deltaBuf = encoder.encodeDelta(delta, serverEm, registry, differ.netIdToEntity);
+    const deltaBuf = differ.diffAndEncode(encoder);
     const deltaMsg = decoder.decode(deltaBuf, registry) as DeltaMessage;
 
     // Delta targets netId=1

@@ -1,6 +1,6 @@
 import type { EntityId, EntityManager } from 'archetype-ecs';
 import type { ComponentRegistry } from './ComponentRegistry.js';
-import type { Delta, DeltaMessage, FieldInfo, FullStateMessage, NetMessage, WireType } from './types.js';
+import type { DeltaMessage, FieldInfo, FullStateMessage, NetMessage, WireType } from './types.js';
 import { MSG_DELTA, MSG_FULL } from './types.js';
 
 // ── Encoder ─────────────────────────────────────────────
@@ -28,19 +28,19 @@ export class ProtocolEncoder {
     this.view = new DataView(this.buf);
   }
 
-  private writeU8(v: number) {
+  writeU8(v: number) {
     this.ensure(1);
     this.view.setUint8(this.offset, v);
     this.offset += 1;
   }
 
-  private writeU16(v: number) {
+  writeU16(v: number) {
     this.ensure(2);
     this.view.setUint16(this.offset, v, true);
     this.offset += 2;
   }
 
-  private writeU32(v: number) {
+  writeU32(v: number) {
     this.ensure(4);
     this.view.setUint32(this.offset, v, true);
     this.offset += 4;
@@ -84,7 +84,31 @@ export class ProtocolEncoder {
     this.offset += encoded.byteLength;
   }
 
-  private writeField(type: WireType, value: unknown) {
+  /** Reserve a u8 slot, returns the offset for backpatching */
+  reserveU8(): number {
+    const off = this.offset;
+    this.writeU8(0);
+    return off;
+  }
+
+  /** Reserve a u16 slot, returns the offset for backpatching */
+  reserveU16(): number {
+    const off = this.offset;
+    this.writeU16(0);
+    return off;
+  }
+
+  /** Write a u8 value at a previously reserved offset */
+  patchU8(off: number, v: number) {
+    this.view.setUint8(off, v);
+  }
+
+  /** Write a u16 value at a previously reserved offset */
+  patchU16(off: number, v: number) {
+    this.view.setUint16(off, v, true);
+  }
+
+  writeField(type: WireType, value: unknown) {
     switch (type) {
       case 'f32': this.writeF32(value as number); break;
       case 'f64': this.writeF64(value as number); break;
@@ -148,75 +172,6 @@ export class ProtocolEncoder {
     return this.finish();
   }
 
-  // ── Delta encoding ──────────────────────────────────
-
-  encodeDelta(
-    delta: Delta,
-    em: EntityManager,
-    registry: ComponentRegistry,
-    netIdToEntity: ReadonlyMap<number, EntityId>,
-  ): ArrayBuffer {
-    this.reset();
-    this.writeU8(MSG_DELTA);
-
-    // Created entities
-    this.writeU16(delta.created.size);
-    for (const [netId, compMap] of delta.created) {
-      this.writeU32(netId);
-      this.writeU8(compMap.size);
-      for (const [wireId, data] of compMap) {
-        const reg = registry.byWireId(wireId);
-        if (!reg) continue;
-        this.writeU8(wireId);
-        this.writeComponentData(reg.fields, data);
-      }
-    }
-
-    // Destroyed entities
-    this.writeU16(delta.destroyed.length);
-    for (const netId of delta.destroyed) {
-      this.writeU32(netId);
-    }
-
-    // Updated fields
-    let updateCount = 0;
-    for (const dirtyFields of delta.updated.values()) {
-      updateCount += dirtyFields.length;
-    }
-    this.writeU16(updateCount);
-
-    for (const [netId, dirtyFields] of delta.updated) {
-      const entityId = netIdToEntity.get(netId);
-      if (entityId === undefined) continue;
-
-      for (const dirty of dirtyFields) {
-        const reg = registry.byWireId(dirty.componentWireId);
-        if (!reg) continue;
-
-        this.writeU32(netId);
-        this.writeU8(dirty.componentWireId);
-
-        // Build field bitmask
-        let mask = 0;
-        for (const fieldName of dirty.fields) {
-          const idx = reg.fields.findIndex(f => f.name === fieldName);
-          if (idx >= 0) mask |= (1 << idx);
-        }
-        this.writeU8(mask);
-
-        // Write only dirty field values
-        for (let i = 0; i < reg.fields.length; i++) {
-          if (mask & (1 << i)) {
-            const field = reg.fields[i];
-            const value = em.get(entityId, (reg.component as any)[field.name]);
-            this.writeField(field.type, value);
-          }
-        }
-      }
-    }
-
-    return this.finish();
-  }
 }
 
 // ── Decoder ─────────────────────────────────────────────
@@ -402,15 +357,6 @@ export function encodeFullState(
   entityNetIds: ReadonlyMap<EntityId, number>,
 ): ArrayBuffer {
   return sharedEncoder.encodeFullState(em, registry, entityNetIds);
-}
-
-export function encodeDelta(
-  delta: Delta,
-  em: EntityManager,
-  registry: ComponentRegistry,
-  netIdToEntity: ReadonlyMap<number, EntityId>,
-): ArrayBuffer {
-  return sharedEncoder.encodeDelta(delta, em, registry, netIdToEntity);
 }
 
 export function decode(buffer: ArrayBuffer, registry: ComponentRegistry): NetMessage {

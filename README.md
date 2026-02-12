@@ -217,12 +217,11 @@ const differ = createSnapshotDiffer(em, registry)
 const encoder = new ProtocolEncoder()
 const decoder = new ProtocolDecoder()
 
-// First diff establishes baseline (returns all Networked entities as "created")
-differ.diff()
+// First call establishes baseline (encodes all Networked entities as "created")
+differ.diffAndEncode(encoder)
 
-// Game loop
-const delta = differ.diff()
-const buffer = encoder.encodeDelta(delta, em, registry, differ.netIdToEntity)
+// Game loop — diff + encode in a single fused pass
+const buffer = differ.diffAndEncode(encoder)
 // → send buffer to clients
 
 // On receive
@@ -233,16 +232,15 @@ const msg = decoder.decode(buffer, registry)
 
 ## Benchmarks
 
-100k entities, Position += Velocity, Termux/Android (aarch64):
+1M entities across 4 archetypes (Players 50k/6c, Projectiles 250k/3c, NPCs 100k/5c, Static 600k/2c), 6 registered components, 3 game systems per tick. Termux/Android (aarch64):
 
-| Test | ms/frame | overhead |
-|---|---:|---:|
-| Raw ECS forEach (100k) | 0.32 | baseline |
-| forEach + diff (1k networked) | 0.83 | +0.51ms |
-| forEach + diff + encode (1k networked) | 1.53 | +1.21ms |
-| forEach + diff (100k networked, worst) | 108.1 | +107.8ms |
+| Test | ms/frame | overhead | wire |
+|---|---:|---:|---:|
+| Raw game tick (1M, 4 archetypes) | 3.24 | baseline | |
+| + diffAndEncode (4k networked, 1%) | 5.53 | +2.29ms | 110 KB |
+| + diffAndEncode (40k networked, 10%) | 22.00 | +18.75ms | 1.1 MB |
 
-1k networked out of 100k total adds ~0.5ms diff overhead per frame.
+`diffAndEncode()` diffs and encodes in a single fused pass — no intermediate allocations. At 1% networked (4k entities), the total overhead is 2.3ms — well within a 60fps budget.
 
 Run them yourself:
 
@@ -264,11 +262,11 @@ Tag component. Add to any entity that should be synced over the network.
 
 ### `createSnapshotDiffer(em, registry)`
 
-Create a differ that compares the current ECS state against a double-buffered snapshot. Returns a `SnapshotDiffer` with a single method:
+Create a differ that compares the current ECS state against a double-buffered snapshot. Returns a `SnapshotDiffer`:
 
 | Method / Property | Description |
 |---|---|
-| `diff()` | Compare front vs back buffers, return `Delta`, flush snapshots |
+| `diffAndEncode(encoder)` | Diff + binary encode in one fused pass — returns `ArrayBuffer` directly |
 | `entityNetIds` | `ReadonlyMap<EntityId, number>` — entity → netId mapping |
 | `netIdToEntity` | `ReadonlyMap<number, EntityId>` — netId → entity mapping |
 
@@ -304,7 +302,6 @@ Binary codec. Write buffer grows as needed.
 | Method | Description |
 |---|---|
 | `encoder.encodeFullState(em, registry, entityNetIds)` | Encode all Networked entities → `ArrayBuffer` |
-| `encoder.encodeDelta(delta, em, registry, netIdToEntity)` | Encode delta → `ArrayBuffer` |
 | `decoder.decode(buffer, registry)` | Decode → `FullStateMessage \| DeltaMessage` |
 
 ---
