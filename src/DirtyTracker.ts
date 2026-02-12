@@ -50,17 +50,11 @@ export interface SnapshotDiffer {
   /** Phase 1: compute what changed this tick (run once, then encode per client) */
   computeChangeset(): Changeset;
 
-  /** Phase 2: encode a per-client delta from a changeset + client delta */
-  encodeChangeset(encoder: ProtocolEncoder, changeset: Changeset, clientDelta: ClientDelta): ArrayBuffer;
-
   /** Pre-encode all entities in a changeset into cached byte slices (1× per tick) */
   preEncodeChangeset(encoder: ProtocolEncoder, changeset: Changeset, extraEnterNetIds: Iterable<number>): EntityCache;
 
   /** Compose a per-client delta buffer from pre-encoded cache (fast memcpy path) */
   composeFromCache(encoder: ProtocolEncoder, cache: EntityCache, clientDelta: ClientDelta): ArrayBuffer;
-
-  /** Encode full component data for a single entity (for view-enter encoding) */
-  encodeEntityComponents(encoder: ProtocolEncoder, entityId: EntityId): void;
 
   /** Flush snapshot buffers. Must call after all encoding is done when using computeChangeset(). */
   flushSnapshots(): void;
@@ -398,51 +392,6 @@ export function createSnapshotDiffer(
       for (const d of destroyed) destroyedSet.add(d);
 
       return { created, destroyed, dirty, createdSet, destroyedSet };
-    },
-
-    // ── Interest mode: Phase 2 — encode per-client delta ──
-
-    encodeChangeset(encoder: ProtocolEncoder, changeset: Changeset, clientDelta: ClientDelta): ArrayBuffer {
-      encoder.reset();
-      encoder.writeU8(MSG_DELTA);
-
-      // Created section: entities entering this client's view
-      encoder.writeU16(clientDelta.enters.length);
-      const globalCreatedMap = new Map<number, EntityId>();
-      for (const c of changeset.created) globalCreatedMap.set(c.netId, c.entityId);
-
-      for (const netId of clientDelta.enters) {
-        encoder.writeVarint(netId);
-        // Entity might be globally created or just entering this client's view
-        const eid = globalCreatedMap.get(netId) ?? netIdToEntityMap.get(netId);
-        if (eid !== undefined) {
-          writeEntityComponents(encoder, eid);
-        } else {
-          encoder.patchU8(encoder.reserveU8(), 0); // 0 components (shouldn't happen)
-        }
-      }
-
-      // Destroyed section: entities leaving this client's view
-      encoder.writeU16(clientDelta.leaves.length);
-      for (const netId of clientDelta.leaves) encoder.writeVarint(netId);
-
-      // Updated section: dirty entities still in this client's view
-      const dirtyMap = new Map<number, DirtyEntry>();
-      for (const d of changeset.dirty) dirtyMap.set(d.netId, d);
-
-      encoder.writeU16(clientDelta.updates.length);
-      for (const netId of clientDelta.updates) {
-        const entry = dirtyMap.get(netId);
-        if (entry) {
-          encodeDirtyEntity(encoder, entry);
-        }
-      }
-
-      return encoder.finish();
-    },
-
-    encodeEntityComponents(encoder: ProtocolEncoder, entityId: EntityId) {
-      writeEntityComponents(encoder, entityId);
     },
 
     preEncodeChangeset(encoder: ProtocolEncoder, changeset: Changeset, extraEnterNetIds: Iterable<number>): EntityCache {

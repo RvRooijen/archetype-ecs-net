@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createEntityManager, component } from 'archetype-ecs';
 import { createComponentRegistry } from '../src/ComponentRegistry.js';
 import { Networked, createSnapshotDiffer } from '../src/DirtyTracker.js';
-import type { Changeset } from '../src/DirtyTracker.js';
 import { createClientView } from '../src/InterestManager.js';
 import { ProtocolEncoder, ProtocolDecoder } from '../src/Protocol.js';
 import { createNetServer } from '../src/NetServer.js';
@@ -166,98 +165,10 @@ describe('ClientView', () => {
   });
 });
 
-// ── Unit tests: encodeChangeset ────────────────────────────
-
-describe('encodeChangeset', () => {
-  it('encodes enters with full component data', () => {
-    const em = createEntityManager();
-    const differ = createSnapshotDiffer(em, registry);
-    const encoder = new ProtocolEncoder();
-    const decoder = new ProtocolDecoder();
-
-    em.createEntityWith(Position, { x: 5, y: 10 }, Health, { hp: 42 }, Networked);
-    const changeset = differ.computeChangeset();
-
-    const netId = changeset.created[0].netId;
-    const view = createClientView();
-    const clientDelta = view.update(new Set([netId]), changeset);
-
-    const buffer = differ.encodeChangeset(encoder, changeset, clientDelta);
-    differ.flushSnapshots();
-
-    const msg = decoder.decode(buffer, registry) as DeltaMessage;
-    assert.equal(msg.type, MSG_DELTA);
-    assert.equal(msg.created.size, 1);
-    assert.ok(msg.created.has(netId));
-
-    const posData = msg.created.get(netId)!.get(0)!;
-    assert.ok(Math.abs((posData.x as number) - 5) < 0.01);
-    assert.ok(Math.abs((posData.y as number) - 10) < 0.01);
-
-    const hpData = msg.created.get(netId)!.get(1)!;
-    assert.equal(hpData.hp, 42);
-  });
-
-  it('encodes leaves as destroyed', () => {
-    const em = createEntityManager();
-    const differ = createSnapshotDiffer(em, registry);
-    const encoder = new ProtocolEncoder();
-    const decoder = new ProtocolDecoder();
-
-    const e1 = em.createEntityWith(Position, { x: 1, y: 2 }, Networked);
-    const cs1 = differ.computeChangeset();
-    const netId = cs1.created[0].netId;
-    differ.flushSnapshots();
-
-    const view = createClientView();
-    view.update(new Set([netId]), cs1);
-
-    // Remove from interest
-    const cs2 = differ.computeChangeset();
-    const clientDelta = view.update(new Set<number>(), cs2);
-
-    const buffer = differ.encodeChangeset(encoder, cs2, clientDelta);
-    differ.flushSnapshots();
-
-    const msg = decoder.decode(buffer, registry) as DeltaMessage;
-    assert.equal(msg.destroyed.length, 1);
-    assert.equal(msg.destroyed[0], netId);
-  });
-
-  it('encodes dirty updates only for visible fields', () => {
-    const em = createEntityManager();
-    const differ = createSnapshotDiffer(em, registry);
-    const encoder = new ProtocolEncoder();
-    const decoder = new ProtocolDecoder();
-
-    const e1 = em.createEntityWith(Position, { x: 1, y: 2 }, Networked);
-    const cs1 = differ.computeChangeset();
-    const netId = cs1.created[0].netId;
-    differ.flushSnapshots();
-
-    const view = createClientView();
-    view.update(new Set([netId]), cs1);
-
-    // Change only x
-    em.set(e1, Position.x, 77);
-    const cs2 = differ.computeChangeset();
-    const clientDelta = view.update(new Set([netId]), cs2);
-
-    const buffer = differ.encodeChangeset(encoder, cs2, clientDelta);
-    differ.flushSnapshots();
-
-    const msg = decoder.decode(buffer, registry) as DeltaMessage;
-    assert.equal(msg.updated.length, 1);
-    assert.equal(msg.updated[0].netId, netId);
-    assert.ok(Math.abs((msg.updated[0].data.x as number) - 77) < 0.01);
-    assert.equal(msg.updated[0].data.y, undefined); // y not changed
-  });
-});
-
 // ── Unit tests: composeFromCache ───────────────────────────
 
 describe('composeFromCache', () => {
-  it('produces identical output to encodeChangeset', () => {
+  it('encodes enters, leaves, and updates correctly', () => {
     const em = createEntityManager();
     const differ = createSnapshotDiffer(em, registry);
     const encoder = new ProtocolEncoder();
@@ -282,26 +193,25 @@ describe('composeFromCache', () => {
     const n3 = cs2.created[0].netId;
     const delta = view.update(new Set([n1, n3]), cs2);
 
-    // Encode via both paths
-    const bufOld = differ.encodeChangeset(encoder, cs2, delta);
     const cache = differ.preEncodeChangeset(encoder, cs2, []);
-    const bufNew = differ.composeFromCache(encoder, cache, delta);
-
+    const buf = differ.composeFromCache(encoder, cache, delta);
     differ.flushSnapshots();
 
-    // Binary identical
-    const a = new Uint8Array(bufOld);
-    const b = new Uint8Array(bufNew);
-    assert.equal(a.byteLength, b.byteLength, 'buffer length mismatch');
-    for (let i = 0; i < a.byteLength; i++) {
-      assert.equal(a[i], b[i], `byte mismatch at offset ${i}`);
-    }
-
-    // Also verify content is correct
-    const msg = decoder.decode(bufNew, registry) as DeltaMessage;
-    assert.equal(msg.created.size, 1); // e3 enters
-    assert.equal(msg.destroyed.length, 1); // e2 leaves
-    assert.equal(msg.updated.length, 1); // e1 updated
+    const msg = decoder.decode(buf, registry) as DeltaMessage;
+    // e3 enters with full data
+    assert.equal(msg.created.size, 1);
+    assert.ok(msg.created.has(n3));
+    const posData = msg.created.get(n3)!.get(0)!;
+    assert.ok(Math.abs((posData.x as number) - 7) < 0.01);
+    assert.ok(Math.abs((posData.y as number) - 8) < 0.01);
+    // e2 leaves
+    assert.equal(msg.destroyed.length, 1);
+    assert.equal(msg.destroyed[0], n2);
+    // e1 updated (only x changed)
+    assert.equal(msg.updated.length, 1);
+    assert.equal(msg.updated[0].netId, n1);
+    assert.ok(Math.abs((msg.updated[0].data.x as number) - 99) < 0.01);
+    assert.equal(msg.updated[0].data.y, undefined);
   });
 
   it('handles view-enter for existing entities (extraEnterNetIds)', () => {
@@ -339,9 +249,9 @@ describe('composeFromCache', () => {
   });
 });
 
-// ── Integration: tickWithInterest over WebSocket ───────────
+// ── Integration: tick(filter) over WebSocket ───────────────
 
-describe('tickWithInterest', () => {
+describe('tick(filter)', () => {
   function recv(ws: WebSocket): Promise<ArrayBuffer> {
     return new Promise(r => ws.once('message', (d: Buffer) =>
       r(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength))));
@@ -357,7 +267,7 @@ describe('tickWithInterest', () => {
     const server = createNetServer(em, registry, { port: 19930 });
 
     // Baseline tick to establish snapshot + assign netIds
-    server.tickWithInterest(() => new Set<number>());
+    server.tick(() => new Set<number>());
 
     await server.start();
 
@@ -384,7 +294,7 @@ describe('tickWithInterest', () => {
     let client1Id: number | null = null;
     let client2Id: number | null = null;
 
-    server.tickWithInterest((clientId) => {
+    server.tick((clientId) => {
       // First client connected gets client1Id
       if (client1Id === null) {
         client1Id = clientId;
@@ -444,7 +354,7 @@ describe('tickWithInterest', () => {
 
     const server = createNetServer(em, registry, { port: 19932 });
     // Baseline — assigns netIds, no clients yet
-    server.tickWithInterest(() => new Set<number>());
+    server.tick(() => new Set<number>());
 
     await server.start();
 
@@ -491,7 +401,7 @@ describe('tickWithInterest', () => {
     const p2t1 = recv(ws2);
     const p3t1 = recv(ws3);
 
-    server.tickWithInterest((cid) => {
+    server.tick((cid) => {
       if (cid === cid1) return new Set([nA, nB]);
       if (cid === cid2) return new Set([nC, nD]);
       return new Set([nB, nC]);
@@ -530,7 +440,7 @@ describe('tickWithInterest', () => {
     const p1t2 = recv(ws1);
     const p3t2 = recv(ws3);
 
-    server.tickWithInterest((cid) => {
+    server.tick((cid) => {
       if (cid === cid1) return new Set([nA, nB, nC]); // +C
       if (cid === cid2) return new Set([nC, nD]);       // unchanged, nothing dirty
       return new Set([nB, nC, nD]);                      // +D
@@ -563,7 +473,7 @@ describe('tickWithInterest', () => {
     const p2t3 = recv(ws2);
     const p3t3 = recv(ws3);
 
-    server.tickWithInterest((cid) => {
+    server.tick((cid) => {
       if (cid === cid1) return new Set([nA, nB, nC]);
       if (cid === cid2) return new Set([nC]);        // D destroyed, drop it
       return new Set([nB, nC]);                       // D destroyed, drop it
@@ -596,7 +506,7 @@ describe('tickWithInterest', () => {
     const p2t4 = recv(ws2);
     const p3t4 = recv(ws3);
 
-    server.tickWithInterest((cid) => {
+    server.tick((cid) => {
       if (cid === cid1) return new Set([nA, nB, nC, 5]); // netId 5 = eE (next after 4)
       if (cid === cid2) return new Set([nC]);
       return new Set([nB, nC]);
@@ -654,14 +564,14 @@ describe('tickWithInterest', () => {
     sent.length = 0; // clear full state sends
 
     // Baseline tick
-    server.tickWithInterest(() => new Set(server.clientCount > 0 ? [1] : []));
+    server.tick(() => new Set(server.clientCount > 0 ? [1] : []));
     sent.length = 0;
 
     // All 3 clients see the same entity, update it
     em.set(e1, Position.x, 99);
 
     const allSee = new Set([1]); // netId 1
-    server.tickWithInterest(() => allSee);
+    server.tick(() => allSee);
 
     // All 3 should receive a message
     assert.equal(sent.length, 3);

@@ -99,10 +99,8 @@ export interface NetServer {
   start(): Promise<void>;
   /** Stop server and disconnect all clients */
   stop(): Promise<void>;
-  /** Snapshot-diff Networked entities, encode delta, broadcast. Call once per tick. */
-  tick(): void;
-  /** Interest-based tick: compute changeset once, then encode per-client filtered deltas. */
-  tickWithInterest(filter: InterestFilter): void;
+  /** Diff, encode, send. Without filter: broadcast to all. With filter: per-client interest. */
+  tick(filter?: InterestFilter): void;
   /** Number of connected clients */
   readonly clientCount: number;
   /** Callbacks */
@@ -161,18 +159,16 @@ export function createNetServer(
       clientViews.clear();
     },
 
-    tick() {
-      const buffer = differ.diffAndEncode(encoder);
+    tick(filter?: InterestFilter) {
+      if (!filter) {
+        const buffer = differ.diffAndEncode(encoder);
+        if (clientIds.size === 0) return;
+        if (buffer.byteLength <= 7) return;
+        tp.broadcast(buffer);
+        return;
+      }
 
-      if (clientIds.size === 0) return;
 
-      // Skip broadcast if delta is empty (header-only: 1 byte msgType + 3x u16 zeros = 7 bytes)
-      if (buffer.byteLength <= 7) return;
-
-      tp.broadcast(buffer);
-    },
-
-    tickWithInterest(filter: InterestFilter) {
       const changeset = differ.computeChangeset();
 
       // Phase 1: compute all client deltas, group by identical content
