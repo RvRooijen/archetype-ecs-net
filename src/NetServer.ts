@@ -1,8 +1,22 @@
 import type { EntityManager } from 'archetype-ecs';
 import type { ComponentRegistry } from './ComponentRegistry.js';
 import { createSnapshotDiffer } from './DirtyTracker.js';
+import type { InterestFilter } from './InterestManager.js';
+import { createClientView } from './InterestManager.js';
 import { ProtocolEncoder } from './Protocol.js';
+import type { ClientDelta } from './InterestManager.js';
 import type { ClientId, NetworkConfig } from './types.js';
+
+const EMPTY_KEY = '||';
+
+function deltaKey(d: ClientDelta): string {
+  if (d.enters.length === 0 && d.leaves.length === 0 && d.updates.length === 0) return EMPTY_KEY;
+  // Sort copies — don't mutate the original arrays
+  const e = d.enters.length > 1 ? d.enters.slice().sort((a, b) => a - b) : d.enters;
+  const l = d.leaves.length > 1 ? d.leaves.slice().sort((a, b) => a - b) : d.leaves;
+  const u = d.updates.length > 1 ? d.updates.slice().sort((a, b) => a - b) : d.updates;
+  return `${e.join(',')}|${l.join(',')}|${u.join(',')}`;
+}
 
 // ── Transport interface ─────────────────────────────────
 
@@ -87,6 +101,8 @@ export interface NetServer {
   stop(): Promise<void>;
   /** Snapshot-diff Networked entities, encode delta, broadcast. Call once per tick. */
   tick(): void;
+  /** Interest-based tick: compute changeset once, then encode per-client filtered deltas. */
+  tickWithInterest(filter: InterestFilter): void;
   /** Number of connected clients */
   readonly clientCount: number;
   /** Callbacks */
@@ -103,27 +119,33 @@ export function createNetServer(
   const encoder = new ProtocolEncoder();
   const differ = createSnapshotDiffer(em, registry);
   const tp = transport ?? createWsTransport();
-  let connectedClients = 0;
+  const clientIds = new Set<ClientId>();
+  const clientViews = new Map<ClientId, ReturnType<typeof createClientView>>();
 
   const server: NetServer = {
     onConnect: null,
     onDisconnect: null,
 
     get clientCount() {
-      return connectedClients;
+      return clientIds.size;
     },
 
     start() {
       return tp.start(config.port, {
         onOpen(clientId) {
-          connectedClients++;
+          clientIds.add(clientId);
+          clientViews.set(clientId, createClientView());
           const fullState = encoder.encodeFullState(em, registry, differ.entityNetIds);
           tp.send(clientId, fullState);
+          // Initialize the client view's known set to match the full state we just sent
+          const knownNetIds = new Set<number>(differ.entityNetIds.values());
+          clientViews.get(clientId)!.initKnown(knownNetIds);
           server.onConnect?.(clientId);
         },
 
         onClose(clientId) {
-          connectedClients--;
+          clientIds.delete(clientId);
+          clientViews.delete(clientId);
           server.onDisconnect?.(clientId);
         },
 
@@ -135,18 +157,72 @@ export function createNetServer(
 
     async stop() {
       await tp.stop();
-      connectedClients = 0;
+      clientIds.clear();
+      clientViews.clear();
     },
 
     tick() {
       const buffer = differ.diffAndEncode(encoder);
 
-      if (connectedClients === 0) return;
+      if (clientIds.size === 0) return;
 
       // Skip broadcast if delta is empty (header-only: 1 byte msgType + 3x u16 zeros = 7 bytes)
       if (buffer.byteLength <= 7) return;
 
       tp.broadcast(buffer);
+    },
+
+    tickWithInterest(filter: InterestFilter) {
+      const changeset = differ.computeChangeset();
+
+      // Phase 1: compute all client deltas, group by identical content
+      const groups = new Map<string, { delta: ClientDelta; clients: ClientId[] }>();
+      const extraEnterNetIds = new Set<number>();
+
+      for (const clientId of clientIds) {
+        const view = clientViews.get(clientId);
+        if (!view) continue;
+
+        const interest = filter(clientId);
+        const delta = view.update(interest, changeset);
+
+        const key = deltaKey(delta);
+        if (key === EMPTY_KEY) continue;
+
+        let group = groups.get(key);
+        if (!group) {
+          // Copy arrays — clientView reuses them on next update() call
+          group = {
+            delta: { enters: [...delta.enters], leaves: [...delta.leaves], updates: [...delta.updates] },
+            clients: [],
+          };
+          groups.set(key, group);
+        }
+        group.clients.push(clientId);
+
+        // Collect view-enters that aren't global creates (need pre-encoding)
+        for (const netId of delta.enters) {
+          if (!changeset.createdSet.has(netId)) extraEnterNetIds.add(netId);
+        }
+      }
+
+      if (groups.size === 0) {
+        differ.flushSnapshots();
+        return;
+      }
+
+      // Phase 2: pre-encode all entities once
+      const cache = differ.preEncodeChangeset(encoder, changeset, extraEnterNetIds);
+
+      // Phase 3: compose per group from cached slices, send to all clients
+      for (const group of groups.values()) {
+        const buffer = differ.composeFromCache(encoder, cache, group.delta);
+        for (const clientId of group.clients) {
+          tp.send(clientId, buffer);
+        }
+      }
+
+      differ.flushSnapshots();
     },
   };
 

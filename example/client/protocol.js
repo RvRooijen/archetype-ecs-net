@@ -1,42 +1,39 @@
-// Inline binary decoder for MSG_FULL (0x01).
-// Matches the wire format from archetype-ecs-net without importing the library.
+// Uses the package's ProtocolDecoder instead of an inline copy.
+// Serve from project root so the dist/ imports resolve.
+import { ProtocolDecoder } from '../../dist/Protocol.js';
+import { MSG_FULL } from '../../dist/types.js';
 
-function readVarint(view, o) {
-  let v = 0, shift = 0, b;
-  do { b = view.getUint8(o.p++); v |= (b & 0x7F) << shift; shift += 7; } while (b >= 0x80);
-  return v >>> 0;
-}
+const decoder = new ProtocolDecoder();
 
+// Lightweight registry — just field metadata, no ECS dependency.
+// Must match the server's registry order (shared.ts).
+const registry = {
+  byWireId(id) {
+    return [
+      { fields: [{ name: 'x', type: 'i16' }, { name: 'y', type: 'i16' }] },             // 0: Position
+      { fields: [{ name: 'kind', type: 'u8' }] },                                         // 1: EntityType
+      { fields: [{ name: 'current', type: 'i16' }, { name: 'max', type: 'i16' }] },       // 2: Health
+      { fields: [{ name: 'variant', type: 'u8' }] },                                      // 3: Appearance
+    ][id];
+  },
+};
+
+/** Decode MSG_FULL buffer → Map<netId, {x, y, kind, hp, maxHp, variant}> */
 export function decodeFullState(buf) {
-  const view = new DataView(buf);
-  const o = { p: 1 }; // skip msg type byte
-  const count = view.getUint16(o.p, true); o.p += 2;
+  const msg = decoder.decode(buf, registry);
+  if (msg.type !== MSG_FULL) return new Map();
+
   const result = new Map();
-
-  for (let e = 0; e < count; e++) {
-    const netId = readVarint(view, o);
-    const compCount = view.getUint8(o.p++);
+  for (const [netId, compMap] of msg.entities) {
     const ent = { x: 0, y: 0, kind: 0, hp: 0, maxHp: 0, variant: 0 };
-
-    for (let c = 0; c < compCount; c++) {
-      const wireId = view.getUint8(o.p++);
-      switch (wireId) {
-        case 0: // Position: i16 x, i16 y
-          ent.x = view.getInt16(o.p, true); o.p += 2;
-          ent.y = view.getInt16(o.p, true); o.p += 2;
-          break;
-        case 1: // EntityType: u8 kind
-          ent.kind = view.getUint8(o.p++);
-          break;
-        case 2: // Health: i16 current, i16 max
-          ent.hp = view.getInt16(o.p, true); o.p += 2;
-          ent.maxHp = view.getInt16(o.p, true); o.p += 2;
-          break;
-        case 3: // Appearance: u8 variant
-          ent.variant = view.getUint8(o.p++);
-          break;
-      }
-    }
+    const pos = compMap.get(0);
+    if (pos) { ent.x = pos.x; ent.y = pos.y; }
+    const etype = compMap.get(1);
+    if (etype) { ent.kind = etype.kind; }
+    const hp = compMap.get(2);
+    if (hp) { ent.hp = hp.current; ent.maxHp = hp.max; }
+    const app = compMap.get(3);
+    if (app) { ent.variant = app.variant; }
     result.set(netId, ent);
   }
   return result;

@@ -117,6 +117,12 @@ export class ProtocolEncoder {
     this.writeU8(v);
   }
 
+  writeBytes(data: Uint8Array) {
+    this.ensure(data.byteLength);
+    new Uint8Array(this.buf, this.offset, data.byteLength).set(data);
+    this.offset += data.byteLength;
+  }
+
   writeField(type: WireType, value: unknown) {
     switch (type) {
       case 'f32': this.writeF32(value as number); break;

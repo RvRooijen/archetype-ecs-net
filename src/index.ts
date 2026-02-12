@@ -2,7 +2,10 @@ export { createComponentRegistry } from './ComponentRegistry.js';
 export type { ComponentRegistry } from './ComponentRegistry.js';
 
 export { createSnapshotDiffer, Networked } from './DirtyTracker.js';
-export type { SnapshotDiffer } from './DirtyTracker.js';
+export type { SnapshotDiffer, Changeset, CreatedEntry, DirtyEntry, EntityCache } from './DirtyTracker.js';
+
+export { createClientView } from './InterestManager.js';
+export type { InterestFilter, ClientDelta, ClientView } from './InterestManager.js';
 
 export { ProtocolEncoder, ProtocolDecoder, encodeFullState, decode } from './Protocol.js';
 
