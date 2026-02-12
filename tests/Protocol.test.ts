@@ -159,6 +159,26 @@ describe('Protocol - Delta (fused path)', () => {
     assert.equal(msg.destroyed.length, 0);
     assert.equal(msg.updated.length, 0);
   });
+
+  it('destroy + create in same tick works', () => {
+    const em = createEntityManager();
+    const e1 = em.createEntityWith(Position, { x: 1, y: 2 }, Networked);
+    const differ = createSnapshotDiffer(em, registry);
+    const encoder = new ProtocolEncoder();
+    const decoder = new ProtocolDecoder();
+
+    differ.diffAndEncode(encoder); // baseline
+
+    em.destroyEntity(e1);
+    em.createEntityWith(Position, { x: 10, y: 20 }, Networked);
+    const buffer = differ.diffAndEncode(encoder);
+    const msg = decoder.decode(buffer, registry) as DeltaMessage;
+
+    assert.equal(msg.destroyed.length, 1);
+    assert.equal(msg.destroyed[0], 1); // netId=1 destroyed
+    assert.equal(msg.created.size, 1);
+    assert.ok(msg.created.has(2)); // netId=2 created
+  });
 });
 
 describe('SnapshotDiffer', () => {

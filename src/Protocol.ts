@@ -328,7 +328,7 @@ export class ProtocolDecoder {
     for (let i = 0; i < updatedCount; i++) {
       const netId = this.readU32();
       const wireId = this.readU8();
-      const fieldMask = this.readU8();
+      const fieldMask = this.readU16();
       const reg = registry.byWireId(wireId);
       if (!reg) throw new Error(`Unknown wire ID: ${wireId}`);
 

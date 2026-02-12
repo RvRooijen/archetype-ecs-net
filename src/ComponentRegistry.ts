@@ -60,6 +60,10 @@ export function createComponentRegistry(registrations: ComponentRegistration[]):
       }
     }
 
+    if (fields.length > 16) {
+      throw new Error(`Component "${reg.name}" has ${fields.length} fields (max 16 for u16 field bitmask)`);
+    }
+
     const entry: RegisteredComponent = {
       wireId: i,
       name: reg.name,

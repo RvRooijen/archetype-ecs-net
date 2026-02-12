@@ -146,7 +146,7 @@ export function createSnapshotDiffer(
         }
         if (fieldArrs.length === 0) return;
 
-        const dirtyMasks = new Uint8Array(maxWireId + 1);
+        const dirtyMasks = new Uint16Array(maxWireId + 1);
 
         for (let i = 0; i < minCount; i++) {
           const eid = entityIds[i];
@@ -176,7 +176,7 @@ export function createSnapshotDiffer(
               updateCount++;
               encoder.writeU32(netId);
               encoder.writeU8(w);
-              encoder.writeU8(mask);
+              encoder.writeU16(mask);
 
               // Write dirty field values directly from front buffer
               for (let f = 0; f < fieldArrs.length; f++) {
