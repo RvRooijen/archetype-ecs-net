@@ -353,6 +353,7 @@ export function createNetClient(
 
       netToEntity.set(netId, localId);
     }
+    _ownedDirty = true;
   }
 
   function applyDelta(msg: DeltaMessage) {
@@ -434,10 +435,26 @@ export function createNetClient(
 
       em.addComponent(localId, reg.component, entry.data);
     }
+    _ownedDirty = true;
   }
 
   let _clientId = -1;
   let _reconnectToken = 0;  // 0 = no token (new client)
+
+  // Cached owned entities — rebuilt after fullState/delta/clientId changes
+  let _ownedCache: EntityId[] = [];
+  let _ownedDirty = true;
+
+  function rebuildOwnedCache() {
+    if (!options?.ownerComponent) { _ownedCache = []; _ownedDirty = false; return; }
+    const ref = options.ownerComponent.clientIdField;
+    const result: EntityId[] = [];
+    for (const eid of netToEntity.values()) {
+      if (em.get(eid, ref) === _clientId) result.push(eid);
+    }
+    _ownedCache = result;
+    _ownedDirty = false;
+  }
 
   const client: NetClient = {
     onConnected: null,
@@ -458,13 +475,8 @@ export function createNetClient(
     },
 
     get ownedEntities(): EntityId[] {
-      if (!options?.ownerComponent) return [];
-      const ref = options.ownerComponent.clientIdField;
-      const result: EntityId[] = [];
-      for (const eid of netToEntity.values()) {
-        if (em.get(eid, ref) === _clientId) result.push(eid);
-      }
-      return result;
+      if (_ownedDirty) rebuildOwnedCache();
+      return _ownedCache;
     },
 
     get reconnectToken() {
@@ -513,6 +525,7 @@ export function createNetClient(
           _reconnectToken = view.getUint32(3, true);
           // Reset tracking so client-owned diffs re-initialize after full state
           trackingInitialized = false;
+          _ownedDirty = true;
           // Fire appropriate callback after receiving server confirmation
           if (_clientId === previousClientId && previousClientId !== -1) {
             client.onReconnected?.();
