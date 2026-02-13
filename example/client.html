@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>archetype-ecs-net RPG Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; font-family: monospace; overflow: hidden; touch-action: none; }
+  canvas { cursor: crosshair; image-rendering: pixelated; display: block; width: 100vw; height: 100vh; height: 100dvh; }
+  #ctx-menu { position: fixed; background: #2a2a3e; border: 1px solid #555; color: #eee; font-size: 15px; display: none; z-index: 10; min-width: 140px; border-radius: 4px; }
+  #ctx-menu div { padding: 10px 14px; cursor: pointer; }
+  #ctx-menu div:hover, #ctx-menu div:active { background: #3a3a5e; }
+  #hud { position: fixed; top: 8px; left: 8px; color: #eee; font-size: 12px; background: rgba(0,0,0,0.6); padding: 5px 8px; border-radius: 3px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="hud">Connecting...</div>
+<canvas id="c"></canvas>
+<div id="ctx-menu"></div>
+<script type="module" src="client/main.ts"></script>
+</body>
+</html>

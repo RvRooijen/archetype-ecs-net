@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <clipPath id="left">
+      <rect x="0" y="0" width="50" height="100"/>
+    </clipPath>
+    <clipPath id="right">
+      <rect x="50" y="0" width="50" height="100"/>
+    </clipPath>
+    <path id="mask" d="M50 10 L12 86 L88 86 Z"/>
+  </defs>
+
+  <!-- left: solid black -->
+  <use href="#mask" fill="#000" clip-path="url(#left)"/>
+
+  <!-- right: green polys -->
+  <g clip-path="url(#right)">
+    <polygon points="50,10 69,48 50,48" fill="#00c853"/>
+    <polygon points="69,48 88,86 50,86" fill="#00a843"/>
+    <polygon points="50,48 69,48 50,86" fill="#00b84a"/>
+    <polygon points="69,48 88,86 69,86" fill="#009e3d"/>
+  </g>
+
+  <!-- center: inverted blue triangle, split at midline -->
+  <polygon points="31,48 50,48 50,86" fill="#2979ff"/>
+  <polygon points="50,48 69,48 50,86" fill="#1565c0"/>
+</svg>
