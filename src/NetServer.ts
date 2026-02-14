@@ -5,7 +5,7 @@ import type { InterestFilter } from './InterestManager.js';
 import { createClientView } from './InterestManager.js';
 import { ProtocolDecoder, ProtocolEncoder } from './Protocol.js';
 import type { ClientDelta } from './InterestManager.js';
-import { MSG_CLIENT_DELTA, MSG_CLIENT_ID, MSG_RECONNECT } from './types.js';
+import { MSG_CLIENT_DELTA, MSG_CLIENT_ID, MSG_RECONNECT, MSG_REQUEST_FULL } from './types.js';
 import type { ClientDeltaMessage, ClientId, NetworkConfig } from './types.js';
 
 const EMPTY_KEY = '||||';
@@ -446,6 +446,10 @@ export function createNetServer(
           const firstByte = new Uint8Array(data)[0];
           if (firstByte === MSG_CLIENT_DELTA) {
             applyClientDelta(logicalId, data);
+            return;
+          }
+          if (firstByte === MSG_REQUEST_FULL) {
+            sendFullStateAndInit(logicalId);
             return;
           }
           server.onMessage?.(logicalId, data);

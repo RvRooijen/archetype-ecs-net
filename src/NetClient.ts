@@ -2,13 +2,16 @@ import type { EntityId, EntityManager, ArchetypeView, ComponentDef } from 'arche
 import type { ComponentRegistry } from './ComponentRegistry.js';
 import { Networked } from './DirtyTracker.js';
 import { ProtocolDecoder, ProtocolEncoder } from './Protocol.js';
-import { MSG_CLIENT_DELTA, MSG_CLIENT_ID, MSG_DELTA, MSG_FULL, MSG_RECONNECT } from './types.js';
+import { MSG_CLIENT_DELTA, MSG_CLIENT_ID, MSG_DELTA, MSG_FULL, MSG_RECONNECT, MSG_REQUEST_FULL } from './types.js';
 import type { DeltaMessage, FullStateMessage, WireType } from './types.js';
 
 export interface NetClientOptions {
   /** Component used for entity ownership. If set, only entities where
    *  `clientIdField` matches this client's ID will be diffed and sent. */
   ownerComponent?: { component: ComponentDef<any>; clientIdField: any };
+  /** When more than this many MSG_DELTA messages queue up between ticks,
+   *  discard them all and request a full state resync. 0 = disabled. Default 0. */
+  burstThreshold?: number;
 }
 
 export interface NetClient {
@@ -438,6 +441,59 @@ export function createNetClient(
     _ownedDirty = true;
   }
 
+  // ── Message buffer for tick()-based processing ─────────
+  const pendingMessages: ArrayBuffer[] = [];
+  const burstThreshold = options?.burstThreshold ?? 0;
+
+  function requestFullResync() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const buf = new ArrayBuffer(1);
+    new Uint8Array(buf)[0] = MSG_REQUEST_FULL;
+    ws.send(buf);
+  }
+
+  function processPendingMessages() {
+    if (pendingMessages.length === 0) return;
+
+    // Count deltas in buffer
+    if (burstThreshold > 0) {
+      let deltaCount = 0;
+      for (let i = 0; i < pendingMessages.length; i++) {
+        if (new Uint8Array(pendingMessages[i])[0] === MSG_DELTA) deltaCount++;
+      }
+
+      if (deltaCount > burstThreshold) {
+        // Discard all deltas, keep non-delta messages (custom app messages)
+        for (let i = 0; i < pendingMessages.length; i++) {
+          const firstByte = new Uint8Array(pendingMessages[i])[0];
+          if (firstByte !== MSG_DELTA && firstByte !== MSG_FULL) {
+            client.onMessage?.(pendingMessages[i]);
+          }
+        }
+        pendingMessages.length = 0;
+        requestFullResync();
+        return;
+      }
+    }
+
+    // Process normally
+    for (let i = 0; i < pendingMessages.length; i++) {
+      const buffer = pendingMessages[i];
+      const msg = decoder.decode(buffer, registry);
+
+      if (msg.type === MSG_FULL) {
+        applyFullState(msg as FullStateMessage);
+        (em as any).flushChanges();
+      } else if (msg.type === MSG_DELTA) {
+        applyDelta(msg as DeltaMessage);
+        (em as any).flushChanges();
+      } else {
+        client.onMessage?.(buffer);
+      }
+    }
+    pendingMessages.length = 0;
+  }
+
   let _clientId = -1;
   let _reconnectToken = 0;  // 0 = no token (new client)
 
@@ -493,6 +549,7 @@ export function createNetClient(
     },
 
     tick() {
+      processPendingMessages();
       diffAndSendOwned();
     },
 
@@ -519,6 +576,7 @@ export function createNetClient(
         const buffer = event.data as ArrayBuffer;
         const firstByte = new Uint8Array(buffer)[0];
 
+        // MSG_CLIENT_ID is always handled immediately (connection handshake)
         if (firstByte === MSG_CLIENT_ID) {
           const view = new DataView(buffer);
           _clientId = view.getUint16(1, true);
@@ -535,17 +593,16 @@ export function createNetClient(
           return;
         }
 
-        const msg = decoder.decode(buffer, registry);
-
-        if (msg.type === MSG_FULL) {
+        // MSG_FULL is processed immediately (one-time sync, not subject to burst)
+        if (firstByte === MSG_FULL) {
+          const msg = decoder.decode(buffer, registry);
           applyFullState(msg as FullStateMessage);
-          (em as any).flushChanges(); // drain change queue; don't flush snapshots (would clobber pending client-owned diffs)
-        } else if (msg.type === MSG_DELTA) {
-          applyDelta(msg as DeltaMessage);
-          (em as any).flushChanges(); // drain change queue; don't flush snapshots (would clobber pending client-owned diffs)
-        } else {
-          client.onMessage?.(buffer);
+          (em as any).flushChanges();
+          return;
         }
+
+        // Buffer MSG_DELTA and other messages for processing in tick()
+        pendingMessages.push(buffer);
       };
 
       ws.onclose = () => {

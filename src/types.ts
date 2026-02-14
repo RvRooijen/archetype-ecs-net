@@ -41,6 +41,7 @@ export const MSG_FULL = 0x01;
 export const MSG_DELTA = 0x02;
 export const MSG_CLIENT_DELTA = 0x03;
 export const MSG_RECONNECT = 0x04;
+export const MSG_REQUEST_FULL = 0x05;
 export const MSG_CLIENT_ID = 0xFF;
 
 export interface FullStateMessage {
