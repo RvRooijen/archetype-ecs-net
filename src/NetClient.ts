@@ -391,12 +391,6 @@ export function createNetClient(
       const reg = wireToComponent.get(update.componentWireId);
       if (!reg) continue;
 
-      // Skip server echoes for clientOwned components on entities we own
-      if (reg.clientOwned && options?.ownerComponent) {
-        const ownerId = em.get(localId, options.ownerComponent.clientIdField);
-        if (ownerId === _clientId) continue;
-      }
-
       for (const [fieldName, value] of Object.entries(update.data)) {
         const fieldRef = (reg.component as any)[fieldName];
         if (fieldRef) {
@@ -413,12 +407,6 @@ export function createNetClient(
       const reg = wireToComponent.get(entry.componentWireId);
       if (!reg) continue;
 
-      // Skip clientOwned on own entities
-      if (reg.clientOwned && options?.ownerComponent) {
-        const ownerId = em.get(localId, options.ownerComponent.clientIdField);
-        if (ownerId === _clientId) continue;
-      }
-
       em.removeComponent(localId, reg.component);
     }
 
@@ -429,12 +417,6 @@ export function createNetClient(
 
       const reg = wireToComponent.get(entry.componentWireId);
       if (!reg) continue;
-
-      // Skip clientOwned on own entities
-      if (reg.clientOwned && options?.ownerComponent) {
-        const ownerId = em.get(localId, options.ownerComponent.clientIdField);
-        if (ownerId === _clientId) continue;
-      }
 
       em.addComponent(localId, reg.component, entry.data);
     }
