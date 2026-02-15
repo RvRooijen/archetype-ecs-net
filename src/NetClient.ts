@@ -461,6 +461,13 @@ export function createNetClient(
     // Process normally
     for (let i = 0; i < pendingMessages.length; i++) {
       const buffer = pendingMessages[i];
+      const firstByte = new Uint8Array(buffer)[0];
+
+      if (firstByte !== MSG_FULL && firstByte !== MSG_DELTA) {
+        client.onMessage?.(buffer);
+        continue;
+      }
+
       const msg = decoder.decode(buffer, registry);
 
       if (msg.type === MSG_FULL) {
@@ -469,8 +476,6 @@ export function createNetClient(
       } else if (msg.type === MSG_DELTA) {
         applyDelta(msg as DeltaMessage);
         (em as any).flushChanges();
-      } else {
-        client.onMessage?.(buffer);
       }
     }
     pendingMessages.length = 0;
