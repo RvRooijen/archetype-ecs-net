@@ -25,6 +25,7 @@ export interface FieldInfo {
   name: string;
   type: WireType;
   byteSize: number; // 0 for string (variable length)
+  arraySize: number; // 0 = scalar, >0 = fixed-size array
 }
 
 export interface RegisteredComponent {

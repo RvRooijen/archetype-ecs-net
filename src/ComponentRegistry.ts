@@ -63,13 +63,23 @@ export function createComponentRegistry(registrations: ComponentRegistration[]):
 
     const fields: FieldInfo[] = [];
     if (schema) {
-      for (const [fieldName, Ctor] of Object.entries(schema)) {
+      for (const [fieldName, spec] of Object.entries(schema)) {
+        let Ctor: Function;
+        let arraySize = 0;
+        if (Array.isArray(spec)) {
+          // Fixed-size array: [Uint16Array, 28]
+          Ctor = spec[0];
+          arraySize = spec[1];
+        } else {
+          Ctor = spec;
+        }
         const wireType = CTOR_TO_TYPE.get(Ctor);
         if (!wireType) throw new Error(`Unknown constructor for field "${fieldName}" in "${reg.name}"`);
         fields.push({
           name: fieldName,
           type: wireType,
           byteSize: TYPE_BYTE_SIZE[wireType],
+          arraySize,
         });
       }
     }
@@ -104,7 +114,7 @@ export function createComponentRegistry(registrations: ComponentRegistration[]):
   const clientOwnedSet = new Set<number>();
   for (const c of components) {
     schemaStr += c.name + ':';
-    for (const f of c.fields) schemaStr += f.name + ':' + f.type + ',';
+    for (const f of c.fields) schemaStr += f.name + ':' + f.type + (f.arraySize ? '[' + f.arraySize + ']' : '') + ',';
     schemaStr += c.clientOwned ? 'C' : 'S';
     schemaStr += ';';
     if (c.clientOwned) clientOwnedSet.add(c.wireId);

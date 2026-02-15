@@ -91,12 +91,12 @@ export function createSnapshotDiffer(
 
   // Precompute field refs per registered component
   // Each field also carries its index within the component for bitmask building
-  const compFields: { wireId: number; refs: { name: string; ref: any; fieldIdx: number }[] }[] = [];
+  const compFields: { wireId: number; refs: { name: string; ref: any; fieldIdx: number; arraySize: number }[] }[] = [];
   for (const reg of registry.components) {
-    const refs: { name: string; ref: any; fieldIdx: number }[] = [];
+    const refs: { name: string; ref: any; fieldIdx: number; arraySize: number }[] = [];
     for (let fi = 0; fi < reg.fields.length; fi++) {
       const field = reg.fields[fi];
-      refs.push({ name: field.name, ref: (reg.component as any)[field.name], fieldIdx: fi });
+      refs.push({ name: field.name, ref: (reg.component as any)[field.name], fieldIdx: fi, arraySize: field.arraySize });
     }
     compFields.push({ wireId: reg.wireId, refs });
   }
@@ -133,7 +133,7 @@ export function createSnapshotDiffer(
       encoder.writeU8(cf.wireId);
       for (const f of cf.refs) {
         const regField = registry.components[cf.wireId].fields[f.fieldIdx];
-        encoder.writeField(regField.type, em.get(eid, f.ref));
+        encoder.writeField(regField.type, em.get(eid, f.ref), regField.arraySize);
       }
     }
     encoder.patchU8(compCountOff, compCount);
@@ -148,7 +148,7 @@ export function createSnapshotDiffer(
       encoder.writeU8(w);
       for (const f of compFields[w].refs) {
         const regField = registry.components[w].fields[f.fieldIdx];
-        encoder.writeField(regField.type, em.get(eid, f.ref));
+        encoder.writeField(regField.type, em.get(eid, f.ref), regField.arraySize);
       }
     }
   }
@@ -257,6 +257,7 @@ export function createSnapshotDiffer(
         wireId: number; fieldIdx: number;
         front: any; back: any;
         type: WireType;
+        arraySize: number;
       }[] = [];
       for (const cf of compFields) {
         for (const f of cf.refs) {
@@ -264,7 +265,7 @@ export function createSnapshotDiffer(
           const back = (a as any).snapshot(f.ref);
           if (front && back) {
             const regField = registry.components[cf.wireId].fields[f.fieldIdx];
-            fieldArrs.push({ wireId: cf.wireId, fieldIdx: f.fieldIdx, front, back, type: regField.type });
+            fieldArrs.push({ wireId: cf.wireId, fieldIdx: f.fieldIdx, front, back, type: regField.type, arraySize: f.arraySize });
           }
         }
       }
@@ -283,9 +284,21 @@ export function createSnapshotDiffer(
         const masks = new Uint16Array(maxWireId + 1);
         for (let f = 0; f < fieldArrs.length; f++) {
           const fa = fieldArrs[f];
-          if (fa.front[i] !== fa.back[i]) {
-            masks[fa.wireId] |= (1 << fa.fieldIdx);
-            hasDirty = true;
+          if (fa.arraySize > 0) {
+            // Fixed-size array: compare all elements
+            const base = i * fa.arraySize;
+            for (let j = 0; j < fa.arraySize; j++) {
+              if (fa.front[base + j] !== fa.back[base + j]) {
+                masks[fa.wireId] |= (1 << fa.fieldIdx);
+                hasDirty = true;
+                break;
+              }
+            }
+          } else {
+            if (fa.front[i] !== fa.back[i]) {
+              masks[fa.wireId] |= (1 << fa.fieldIdx);
+              hasDirty = true;
+            }
           }
         }
 
@@ -383,7 +396,7 @@ export function createSnapshotDiffer(
       for (const f of compFields[w].refs) {
         if (mask & (1 << f.fieldIdx)) {
           const regField = registry.components[w].fields[f.fieldIdx];
-          encoder.writeField(regField.type, em.get(entry.entityId, f.ref));
+          encoder.writeField(regField.type, em.get(entry.entityId, f.ref), regField.arraySize);
         }
       }
     }

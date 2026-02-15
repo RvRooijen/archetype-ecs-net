@@ -123,7 +123,14 @@ export class ProtocolEncoder {
     this.offset += data.byteLength;
   }
 
-  writeField(type: WireType, value: unknown) {
+  writeField(type: WireType, value: unknown, arraySize = 0) {
+    if (arraySize > 0) {
+      const arr = value as ArrayLike<number>;
+      for (let i = 0; i < arraySize; i++) {
+        this.writeField(type, arr[i] ?? 0);
+      }
+      return;
+    }
     switch (type) {
       case 'f32': this.writeF32(value as number); break;
       case 'f64': this.writeF64(value as number); break;
@@ -139,7 +146,7 @@ export class ProtocolEncoder {
 
   private writeComponentData(fields: FieldInfo[], data: Record<string, unknown>) {
     for (const field of fields) {
-      this.writeField(field.type, data[field.name]);
+      this.writeField(field.type, data[field.name], field.arraySize);
     }
   }
 
@@ -267,7 +274,12 @@ export class ProtocolDecoder {
     return v >>> 0;
   }
 
-  private readField(type: WireType): unknown {
+  private readField(type: WireType, arraySize = 0): unknown {
+    if (arraySize > 0) {
+      const arr: number[] = new Array(arraySize);
+      for (let i = 0; i < arraySize; i++) arr[i] = this.readField(type) as number;
+      return arr;
+    }
     switch (type) {
       case 'f32': return this.readF32();
       case 'f64': return this.readF64();
@@ -284,7 +296,7 @@ export class ProtocolDecoder {
   private readComponentData(fields: FieldInfo[]): Record<string, unknown> {
     const data: Record<string, unknown> = {};
     for (const field of fields) {
-      data[field.name] = this.readField(field.type);
+      data[field.name] = this.readField(field.type, field.arraySize);
     }
     return data;
   }
@@ -382,7 +394,7 @@ export class ProtocolDecoder {
         const data: Record<string, unknown> = {};
         for (let f = 0; f < reg.fields.length; f++) {
           if (fieldMask & (1 << f)) {
-            data[reg.fields[f].name] = this.readField(reg.fields[f].type);
+            data[reg.fields[f].name] = this.readField(reg.fields[f].type, reg.fields[f].arraySize);
           }
         }
 
@@ -443,7 +455,7 @@ export class ProtocolDecoder {
         const data: Record<string, unknown> = {};
         for (let f = 0; f < reg.fields.length; f++) {
           if (fieldMask & (1 << f)) {
-            data[reg.fields[f].name] = this.readField(reg.fields[f].type);
+            data[reg.fields[f].name] = this.readField(reg.fields[f].type, reg.fields[f].arraySize);
           }
         }
         updated.push({ netId, componentWireId: wireId, fieldMask, data });
