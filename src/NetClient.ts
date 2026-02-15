@@ -408,6 +408,11 @@ export function createNetClient(
       if (!reg) continue;
 
       em.removeComponent(localId, reg.component);
+
+      // Keep client-side presence tracking in sync for clientOwned components
+      if (reg.clientOwned) {
+        prevOwnedPresence.get(entry.netId)?.delete(entry.componentWireId);
+      }
     }
 
     // Apply attaches
@@ -419,6 +424,13 @@ export function createNetClient(
       if (!reg) continue;
 
       em.addComponent(localId, reg.component, entry.data);
+
+      // Keep client-side presence tracking in sync for clientOwned components
+      if (reg.clientOwned) {
+        let set = prevOwnedPresence.get(entry.netId);
+        if (!set) { set = new Set(); prevOwnedPresence.set(entry.netId, set); }
+        set.add(entry.componentWireId);
+      }
     }
     _ownedDirty = true;
   }
